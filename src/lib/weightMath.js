@@ -198,8 +198,15 @@ export function round(value, decimals = 2) {
   return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
-/** Formatea un porcentaje para mostrar, recortando ceros innecesarios */
-export function formatPercent(p, decimals = 2) {
+/**
+ * Formatea un porcentaje para mostrar. Default de 4 decimales: el cálculo
+ * interno (computePercentages) nunca estuvo truncado, pero acá se mostraba
+ * fijo a 2 decimales — por eso se veía "menos preciso" que el % real del
+ * plugin (que no tiene ningún límite, es un double completo). round() ya
+ * recorta ceros de sobra al convertir a string (21 sigue siendo "21", no
+ * "21.0000"), así que subir el default no ensucia los casos simples.
+ */
+export function formatPercent(p, decimals = 6) {
   return `${round(p, decimals)}%`;
 }
 

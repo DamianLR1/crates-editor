@@ -7,13 +7,13 @@ import McText from './McText.jsx';
 import RewardDetailPanel from './RewardDetailPanel.jsx';
 
 export default function RewardsTable() {
-  const { model, updateWeight, removeReward, createReward, renameRewardKey, targetTotal } = useCrate();
+  const { model, updateWeight, removeReward, createReward, renameRewardKey, targetTotal, rarityWeights } = useCrate();
   const [expandedKey, setExpandedKey] = useState(null);
   const [filter, setFilter] = useState('');
 
   if (!model) return null;
 
-  const withPercents = computePercentages(model.rewards);
+  const withPercents = computePercentages(model.rewards, rarityWeights);
   const maxPercent = Math.max(...withPercents.map((r) => r.percent), 1);
 
   const filtered = withPercents.filter((r) =>
@@ -25,7 +25,7 @@ export default function RewardsTable() {
     let n = 1;
     while (model.rewards.some((r) => r.key === `nuevo_premio_${n}`)) n++;
     const key = `nuevo_premio_${n}`;
-    createReward(key, { type: 'COMMAND', weight: 1, name: '&eNuevo Premio', commands: [] });
+    createReward(key, { type: 'COMMAND', weight: 10, name: '&eNuevo Premio', commands: [] });
     setExpandedKey(key);
   };
 

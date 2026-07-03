@@ -7,6 +7,7 @@ import RewardsTable from './components/RewardsTable.jsx';
 import CrateMetaPanel from './components/CrateMetaPanel.jsx';
 import Simulator from './components/Simulator.jsx';
 import ConversionWarningsBanner from './components/ConversionWarningsBanner.jsx';
+import RarityPanel from './components/RarityPanel.jsx';
 
 function AppContent() {
   const { model } = useCrate();
@@ -26,6 +27,7 @@ function AppContent() {
             </div>
             <div className="space-y-6">
               <PoolHealthPanel />
+              <RarityPanel />
               <CrateMetaPanel />
             </div>
           </div>
@@ -34,8 +36,9 @@ function AppContent() {
             <div className="col-span-2">
               <Simulator />
             </div>
-            <div>
+            <div className="space-y-6">
               <PoolHealthPanel />
+              <RarityPanel />
             </div>
           </div>
         )}

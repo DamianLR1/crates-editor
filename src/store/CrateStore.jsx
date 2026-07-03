@@ -11,7 +11,20 @@ import {
   renameReward,
 } from '../lib/crateFile.js';
 import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
-import { validatePool } from '../lib/weightMath.js';
+import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
+
+const RARITY_WEIGHTS_STORAGE_KEY = 'crateforge.rarityWeights';
+
+function loadStoredRarityWeights() {
+  try {
+    const raw = localStorage.getItem(RARITY_WEIGHTS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_RARITY_WEIGHTS };
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : { ...DEFAULT_RARITY_WEIGHTS };
+  } catch {
+    return { ...DEFAULT_RARITY_WEIGHTS };
+  }
+}
 
 const CrateContext = createContext(null);
 
@@ -23,6 +36,26 @@ export function CrateProvider({ children }) {
   const [history, setHistory] = useState([]); // para undo simple
   const [error, setError] = useState(null);
   const [conversionWarnings, setConversionWarnings] = useState(null); // null = no hubo conversión
+
+  // Rewards.Rarities.<id>.Weight vive en el config.yml GLOBAL del server
+  // (no en el archivo de la crate individual), así que no lo leemos de ningún
+  // YAML — es configuración del editor, persistida localmente. Ver
+  // weightMath.js para el porqué esto afecta el % real de cada reward.
+  const [rarityWeights, setRarityWeightsState] = useState(() => loadStoredRarityWeights());
+
+  const setRarityWeight = useCallback((id, weight) => {
+    setRarityWeightsState((prev) => {
+      const next = { ...prev, [String(id).toLowerCase()]: Number(weight) || 0 };
+      try { localStorage.setItem(RARITY_WEIGHTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
+
+  const resetRarityWeights = useCallback(() => {
+    const next = { ...DEFAULT_RARITY_WEIGHTS };
+    setRarityWeightsState(next);
+    try { localStorage.setItem(RARITY_WEIGHTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* noop */ }
+  }, []);
 
   const openFile = useCallback((name, text) => {
     try {
@@ -196,6 +229,9 @@ Rewards:
     targetTotal,
     setTargetTotal,
     validation,
+    rarityWeights,
+    setRarityWeight,
+    resetRarityWeights,
     canUndo: history.length > 0,
     openFile,
     newBlankFile,

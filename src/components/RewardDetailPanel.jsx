@@ -286,21 +286,16 @@ function WinLimitSide({ title, side, data, rewardKey, updateField }) {
         </label>
       </div>
       {data?.enabled && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <MiniNumberField
             label="Máx."
             value={data?.amount ?? -1}
             onCommit={(v) => updateField(rewardKey, ['Win_Limit', side, 'Amount'], v)}
           />
           <MiniNumberField
-            label="Cooldown"
+            label="Cooldown (seg)"
             value={data?.cooldown ?? 0}
             onCommit={(v) => updateField(rewardKey, ['Win_Limit', side, 'Cooldown'], v)}
-          />
-          <MiniNumberField
-            label="Step"
-            value={data?.cooldownStep ?? 1}
-            onCommit={(v) => updateField(rewardKey, ['Win_Limit', side, 'CooldownStep'], v)}
           />
         </div>
       )}

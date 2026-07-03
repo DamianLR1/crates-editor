@@ -1,5 +1,5 @@
 import React from 'react';
-import { AlertTriangle, CheckCircle2, XCircle, Target } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, Target, Info } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
 import { suggestResidualFix, round } from '../lib/weightMath.js';
 
@@ -54,9 +54,13 @@ export default function PoolHealthPanel() {
               className={`flex items-start gap-2 text-xs rounded-lg px-3 py-2 border
                 ${issue.level === 'error'
                   ? 'bg-crimson-500/10 border-crimson-500/30 text-crimson-400'
+                  : issue.level === 'info'
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
                   : 'bg-gold-500/10 border-gold-500/30 text-gold-400'}`}
             >
-              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" strokeWidth={1.5} />
+              {issue.level === 'info'
+                ? <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" strokeWidth={1.5} />
+                : <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" strokeWidth={1.5} />}
               <span className="leading-relaxed">{issue.msg}</span>
             </div>
           ))}

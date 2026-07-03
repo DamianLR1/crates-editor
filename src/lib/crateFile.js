@@ -130,11 +130,15 @@ function buildRewardsModel(root) {
 function buildWinLimitModel(node) {
   const wl = getNode(node, ['Win_Limit']);
   if (!wl) return null;
+  // NOTA: CooldownStep no existe en el plugin real (auditado contra el source
+  // Java, AbstractReward/LimitValues) — lo habíamos inventado sin verificar.
+  // Se dejan Enabled/Amount/Cooldown, que sí son los campos reales del schema
+  // viejo Player/Global (el que el plugin migra automáticamente a "Limits" al
+  // cargar, pero que sigue siendo lo que escriben las versiones <=6.3.x).
   const side = (name) => ({
     enabled: getScalar(node, ['Win_Limit', name, 'Enabled']),
     amount: getScalar(node, ['Win_Limit', name, 'Amount']),
     cooldown: getScalar(node, ['Win_Limit', name, 'Cooldown']),
-    cooldownStep: getScalar(node, ['Win_Limit', name, 'CooldownStep']),
   });
   return { player: side('Player'), global: side('Global') };
 }
@@ -329,8 +333,10 @@ export function renameReward(doc, oldKey, newKey) {
 /**
  * Estructura COMPLETA de un reward tal como la genera el editor in-game
  * de ExcellentCrates. Incluye PreviewData (para que el ítem se vea bien
- * en el menú de preview de la crate) y Win_Limit con los 4 subcampos
- * reales (Enabled/Amount/Cooldown/CooldownStep) para Player y Global.
+ * en el menú de preview de la crate) y Win_Limit con los 3 subcampos reales
+ * (Enabled/Amount/Cooldown) para Player y Global — CooldownStep NO existe en
+ * el plugin real (auditado contra el source Java, se había inventado sin
+ * verificar contra AbstractReward/LimitValues).
  */
 function rewardToPlainObject(r) {
   const obj = {
@@ -343,7 +349,9 @@ function rewardToPlainObject(r) {
   }
 
   Object.assign(obj, {
-    Weight: r.weight ?? 1,
+    // Default real del plugin al crear un reward desde el editor in-game
+    // (RewardCreationDialog: this.setWeight(10D)) — antes usábamos 1.
+    Weight: r.weight ?? 10,
     Rarity: r.rarity || 'common',
     Broadcast: r.broadcast ?? false,
     Placeholder_Apply: r.placeholderApply ?? false,
@@ -352,13 +360,11 @@ function rewardToPlainObject(r) {
         Enabled: r.winLimit?.player?.enabled ?? false,
         Amount: r.winLimit?.player?.amount ?? -1,
         Cooldown: r.winLimit?.player?.cooldown ?? 0,
-        CooldownStep: r.winLimit?.player?.cooldownStep ?? 1,
       },
       Global: {
         Enabled: r.winLimit?.global?.enabled ?? false,
         Amount: r.winLimit?.global?.amount ?? -1,
         Cooldown: r.winLimit?.global?.cooldown ?? 0,
-        CooldownStep: r.winLimit?.global?.cooldownStep ?? 1,
       },
     },
     Ignored_For_Permissions: r.ignoredForPermissions?.length ? r.ignoredForPermissions : [],

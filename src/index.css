@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+
+  --color-ink-950: #0b0e0c;
+  --color-ink-900: #121613;
+  --color-ink-800: #1a201b;
+  --color-ink-700: #242c26;
+  --color-ink-600: #333d35;
+  --color-ink-500: #4a564c;
+
+  --color-parch-100: #f4efe3;
+  --color-parch-200: #e8dfc9;
+
+  --color-gold-400: #e8b64a;
+  --color-gold-500: #d19d2f;
+  --color-gold-600: #a67a1f;
+
+  --color-emerald-400: #4ade80;
+  --color-emerald-500: #22a361;
+
+  --color-crimson-400: #f2637a;
+  --color-crimson-500: #d43f57;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-ink-950);
+  color: var(--color-parch-100);
+  font-family: var(--font-display);
+  background-image:
+    radial-gradient(circle at 10% 0%, rgba(232, 182, 74, 0.06), transparent 40%),
+    radial-gradient(circle at 90% 100%, rgba(34, 163, 97, 0.05), transparent 40%);
+}
+
+::selection {
+  background: var(--color-gold-500);
+  color: var(--color-ink-950);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--color-ink-900); }
+::-webkit-scrollbar-thumb { background: var(--color-ink-600); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-ink-500); }
+
+.font-mono-tab { font-variant-numeric: tabular-nums; }

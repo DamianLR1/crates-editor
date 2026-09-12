@@ -188,6 +188,11 @@ export function buildExcellentCratesYaml(parsed, options = {}) {
 
   return `Name: '${escapeSingleQuotes(parsed.crateName)}'
 Description: []
+ItemProvider:
+  Type: VANILLA
+  Tag:
+    Value: '{count:1,id:"minecraft:chest"}'
+    DataVersion: 4189
 ItemStackable: false
 Permission_Required: false
 Preview:
@@ -216,6 +221,7 @@ Block:
       Name: EGG_CRACK
 Milestones:
   Repeatable: false
+_dataver: 600
 Rewards:
   List:
 ${rewardsYaml}

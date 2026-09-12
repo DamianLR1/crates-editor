@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Dices, Play, RotateCcw } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
-import { simulateOpenings, formatPercent, round, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
+import { simulateOpenings, buildRoller, formatPercent, round } from '../lib/weightMath.js';
 import McText from './McText.jsx';
 
 const PRESETS = [1, 10, 100, 1000, 10000, 100000];
@@ -20,8 +20,9 @@ export default function Simulator() {
     setTimeout(() => {
       const result = simulateOpenings(model.rewards, count, Math.random, rarityWeights);
       setSim(result);
-      if (count <= 50) {
-        setLastOpened(rollIndividually(model.rewards, count, rarityWeights));
+      const roll = count <= 50 ? buildRoller(model.rewards, rarityWeights) : null;
+      if (roll) {
+        setLastOpened(Array.from({ length: count }, () => roll()));
       } else {
         setLastOpened([]);
       }
@@ -86,7 +87,7 @@ export default function Simulator() {
               className="bg-ink-800 border border-ink-600 rounded-lg px-3 py-2 animate-[fadeIn_0.3s_ease-out]"
               style={{ animationDelay: `${i * 40}ms`, animationFillMode: 'backwards' }}
             >
-              <McText text={r.name} className="text-xs" />
+              <McText text={r.displayName} className="text-xs" />
             </div>
           ))}
         </div>
@@ -143,45 +144,3 @@ function SimRow({ result }) {
   );
 }
 
-/**
- * Tira `n` aperturas individuales (para animación de resultados cuando n es
- * chico), replicando el sorteo real de dos pasos de Crate.rollReward:
- * primero Rarity por su Weight, después Reward dentro de esa Rarity.
- */
-function rollIndividually(rewards, n, rarityWeights) {
-  const active = rewards.filter((r) => Number(r.weight) > 0);
-  const groups = new Map(); // rarityId -> rewards[]
-  for (const r of active) {
-    const id = String(r.rarity || 'common').trim().toLowerCase() || 'common';
-    if (!groups.has(id)) groups.set(id, []);
-    groups.get(id).push(r);
-  }
-  const rarityList = [...groups.entries()].map(([id, list]) => ({
-    id,
-    rewards: list,
-    weight: rarityWeights?.[id] ?? DEFAULT_RARITY_WEIGHTS[id] ?? 1,
-    sum: list.reduce((a, r) => a + Number(r.weight), 0),
-  })).filter((g) => g.weight > 0 && g.sum > 0);
-
-  const totalRarityWeight = rarityList.reduce((a, g) => a + g.weight, 0);
-  const out = [];
-  if (totalRarityWeight <= 0) return out;
-
-  for (let i = 0; i < n; i++) {
-    let rarityRoll = Math.random() * totalRarityWeight;
-    let chosenGroup = rarityList[rarityList.length - 1];
-    for (const g of rarityList) {
-      rarityRoll -= g.weight;
-      if (rarityRoll <= 0) { chosenGroup = g; break; }
-    }
-    let roll = Math.random() * chosenGroup.sum;
-    for (const r of chosenGroup.rewards) {
-      roll -= Number(r.weight);
-      if (roll <= 0) {
-        out.push(r);
-        break;
-      }
-    }
-  }
-  return out;
-}

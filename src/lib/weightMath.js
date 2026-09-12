@@ -1,103 +1,68 @@
 // weightMath.js
-// Motor matemático central: pesos <-> porcentajes, detección de residuos decimales,
-// y sugerencias de rebalanceo.
+// Pesos <-> porcentajes, residuos decimales y simulación.
 //
-// ALGORITMO REAL DE EXCELLENTCRATES (auditado contra el source Java v6.6.1 y
-// contra la wiki oficial: https://nightexpressdev.com/excellentcrates/rewards/rarity-weights/):
+// Sorteo real del plugin (Crate.rollReward, fork 6.3.3), en DOS niveles:
+//   1) Rareza, ponderada por Rewards.Rarities.<id>.Weight del config.yml
+//      GLOBAL, solo entre las rarezas que tienen rewards sorteables en la crate.
+//   2) Reward dentro de esa rareza, ponderado por su Weight.
+//   % final = (weight / suma_de_su_rareza) * (peso_rareza / suma_rarezas_presentes)
+// Con una sola rareza colapsa a weight / total.
 //
-// Es un sorteo de DOS NIVELES, no un simple weight/total plano:
-//
-//   1) Se sortea una Rarity entre las que efectivamente tienen rewards en la
-//      crate, ponderada por el Weight de cada Rarity (Rewards.Rarities.<id>.Weight
-//      en el config.yml GLOBAL del plugin — no vive en el archivo de la crate).
-//      rarityChance = rarity.weight / suma_de_weights_de_las_rarezas_presentes
-//
-//   2) Dentro de esa Rarity ganadora, se sortea el Reward ponderado por su
-//      propio Weight, pero solo contra la suma de pesos de rewards de ESA
-//      MISMA rareza (no contra todos los rewards del pool).
-//      rewardChanceDentroDeSuRareza = reward.weight / suma_weights_de_su_rareza
-//
-//   % final del reward = rewardChanceDentroDeSuRareza * rarityChance
-//
-// Si la crate usa una sola Rarity, el sistema colapsa matemáticamente a
-// weight / total (rarityChance = 1 siempre), que es el caso simple documentado
-// por el propio plugin. Retrocompatible 100% con crates de una sola rareza.
-//
-// Defaults reales de Rarity.Weight si el config global no las define
-// explícitamente (confirmado en el source, RarityManager): common=70, rare=25,
-// mythic=5. Cualquier rareza no reconocida en `rarityWeights` cae a este mapa;
-// si tampoco está ahí, se le asigna weight=1 para no romper el cálculo (mejor
-// que dividir por cero o descartar el reward).
+// Detalles que replica:
+//   - Weight <= 0 no es sorteable (AbstractReward.isRollable) y no cuenta.
+//   - Una rareza que no existe en el config cae a la "más común", la de mayor
+//     Weight (RewardFactory.read -> CrateManager.getMostCommonRarity).
+// Win_Limit y permisos filtran por jugador: eso no se puede simular acá.
 
 const EPSILON = 1e-9;
 
+// Defaults del plugin cuando el config no define rarezas (CrateManager.loadRarities).
 export const DEFAULT_RARITY_WEIGHTS = {
   common: 70,
   rare: 25,
   mythic: 5,
 };
 
-/** Normaliza el id de rareza igual que el plugin (Rarity.getId() -> lowercase) */
-function rarityId(r) {
-  return String(r?.rarity || 'common').trim().toLowerCase() || 'common';
+export function mostCommonRarity(rarityWeights = DEFAULT_RARITY_WEIGHTS) {
+  return Object.entries(rarityWeights).sort((a, b) => Number(b[1]) - Number(a[1]))[0]?.[0] ?? 'common';
 }
 
-function weightOfRarity(id, rarityWeights) {
-  if (rarityWeights && Object.prototype.hasOwnProperty.call(rarityWeights, id)) {
-    return Number(rarityWeights[id]) || 0;
-  }
-  if (Object.prototype.hasOwnProperty.call(DEFAULT_RARITY_WEIGHTS, id)) {
-    return DEFAULT_RARITY_WEIGHTS[id];
-  }
-  return 1; // rareza desconocida sin config: fallback neutro, no debería pasar en la práctica
+/** Rareza efectiva de un reward, con el mismo fallback que el plugin. */
+export function rarityOf(r, rarityWeights = DEFAULT_RARITY_WEIGHTS) {
+  const id = String(r?.rarity ?? '').trim().toLowerCase();
+  return Object.hasOwn(rarityWeights, id) ? id : mostCommonRarity(rarityWeights);
 }
 
-/** Suma de pesos de una lista de rewards activos */
+/** Suma de pesos de una lista de rewards */
 export function sumWeights(rewards) {
   return rewards.reduce((acc, r) => acc + (Number(r.weight) || 0), 0);
 }
 
-/**
- * Agrupa rewards por Rarity y calcula, para cada rareza presente en la crate,
- * su propio "chance de ser elegida" (rarityChance) según su Weight relativo
- * a las demás rarezas QUE APARECEN en esta crate (no todas las rarezas
- * globales del server — Crate.getRarities() ya filtra así en el plugin real).
- */
-function groupByRarity(rewards, rarityWeights) {
-  const groups = new Map(); // id -> { id, weight, rewards: [] }
+/** Agrupa los rewards sorteables por rareza efectiva y calcula el chance de cada rareza. */
+function groupByRarity(rewards, rarityWeights = DEFAULT_RARITY_WEIGHTS) {
+  const groups = new Map();
   for (const r of rewards) {
-    const id = rarityId(r);
-    if (!groups.has(id)) {
-      groups.set(id, { id, weight: weightOfRarity(id, rarityWeights), rewards: [] });
-    }
-    groups.get(id).rewards.push(r);
+    if (!(Number(r.weight) > 0)) continue;
+    const id = rarityOf(r, rarityWeights);
+    if (!groups.has(id)) groups.set(id, { id, weight: Number(rarityWeights[id]) || 0, rewards: [], sumWeights: 0 });
+    const g = groups.get(id);
+    g.rewards.push(r);
+    g.sumWeights += Number(r.weight);
   }
   const totalRarityWeight = [...groups.values()].reduce((acc, g) => acc + g.weight, 0);
   for (const g of groups.values()) {
     g.rarityChance = totalRarityWeight > 0 ? g.weight / totalRarityWeight : 0;
-    g.sumWeights = sumWeights(g.rewards);
   }
   return groups;
 }
 
-/**
- * Calcula el % real de cada reward con el sistema de dos niveles.
- * `rarityWeights` es opcional: { common: 70, rare: 25, ... } tal como vive en
- * Rewards.Rarities del config.yml global. Si no se pasa, usa los defaults del
- * plugin. Con una sola rareza en la crate, da exactamente weight/total (igual
- * que antes de este fix).
- */
+/** % real de cada reward (sorteo de dos niveles). */
 export function computePercentages(rewards, rarityWeights) {
   const groups = groupByRarity(rewards, rarityWeights);
   return rewards.map((r) => {
-    const id = rarityId(r);
-    const g = groups.get(id);
-    const withinRarity = g.sumWeights > 0 ? (Number(r.weight) || 0) / g.sumWeights : 0;
-    return {
-      ...r,
-      percent: withinRarity * g.rarityChance * 100,
-      rarityChance: g.rarityChance * 100,
-    };
+    const g = Number(r.weight) > 0 ? groups.get(rarityOf(r, rarityWeights)) : null;
+    const percent = g && g.sumWeights > 0 ? (Number(r.weight) / g.sumWeights) * g.rarityChance * 100 : 0;
+    return { ...r, percent, rarityChance: g ? g.rarityChance * 100 : 0 };
   });
 }
 
@@ -123,10 +88,7 @@ export function analyzeDecimalResidual(rewards) {
     .map((r) => Number(r.weight) || 0)
     .filter((w) => Math.abs(w - Math.round(w)) > EPSILON);
 
-  const fractionalSum = decimals.reduce((acc, w) => {
-    const frac = w - Math.floor(w);
-    return acc + frac;
-  }, 0);
+  const fractionalSum = decimals.reduce((acc, w) => acc + (w - Math.floor(w)), 0);
 
   const residual = fractionalSum - Math.floor(fractionalSum + EPSILON);
   const isClean = Math.abs(residual) < EPSILON || Math.abs(residual - 1) < EPSILON;
@@ -144,8 +106,7 @@ export function analyzeDecimalResidual(rewards) {
  * y una lista de rewards fijos (llaves, armaduras, especiales, etc.)
  */
 export function calcFillerBudget(fixedRewards, targetTotal) {
-  const fixedSum = sumWeights(fixedRewards);
-  return round(targetTotal - fixedSum, 6);
+  return round(targetTotal - sumWeights(fixedRewards), 6);
 }
 
 /**
@@ -154,7 +115,7 @@ export function calcFillerBudget(fixedRewards, targetTotal) {
  * que la suma de partes decimales cierre en entero.
  * Devuelve candidatos ordenados por menor impacto (menos items movidos).
  */
-export function suggestResidualFix(rewards, targetTotal) {
+export function suggestResidualFix(rewards) {
   const groups = new Map(); // peso decimal -> count
   rewards.forEach((r) => {
     const w = Number(r.weight) || 0;
@@ -172,8 +133,6 @@ export function suggestResidualFix(rewards, targetTotal) {
   for (const [weightStr, count] of groups.entries()) {
     const w = parseFloat(weightStr);
     const frac = w - Math.floor(w);
-    // Buscamos cuántos items de este grupo "mover" (bajarlos a peso entero, floor)
-    // para neutralizar la fracción total. moved * frac debe acercarse a un entero.
     for (let moved = 1; moved <= count; moved++) {
       const removedFrac = moved * frac;
       if (Math.abs(removedFrac - Math.round(removedFrac)) < EPSILON) {
@@ -198,33 +157,22 @@ export function round(value, decimals = 2) {
   return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
-/**
- * Formatea un porcentaje para mostrar. Default de 4 decimales: el cálculo
- * interno (computePercentages) nunca estuvo truncado, pero acá se mostraba
- * fijo a 2 decimales — por eso se veía "menos preciso" que el % real del
- * plugin (que no tiene ningún límite, es un double completo). round() ya
- * recorta ceros de sobra al convertir a string (21 sigue siendo "21", no
- * "21.0000"), así que subir el default no ensucia los casos simples.
- */
+/** Formatea un porcentaje. El plugin usa double completo, por eso 6 decimales. */
 export function formatPercent(p, decimals = 6) {
   return `${round(p, decimals)}%`;
 }
 
 /**
- * Valida el pool completo y devuelve un reporte de salud:
- * - total actual vs objetivo (dentro de la Rarity, si aplica)
- * - residuo decimal
- * - items con peso 0 o negativo
- * - duplicados de key
- * - aviso informativo si la crate mezcla 2+ rarezas (el % ya no es weight/total plano)
+ * Reporte de salud del pool: total vs objetivo, residuo decimal, pesos <= 0,
+ * keys duplicadas y aviso si la crate mezcla 2+ rarezas.
  */
-export function validatePool(rewards, targetTotal) {
+export function validatePool(rewards, targetTotal, rarityWeights) {
   const total = round(sumWeights(rewards), 6);
   const residual = analyzeDecimalResidual(rewards);
   const zeroOrNegative = rewards.filter((r) => Number(r.weight) <= 0);
   const keys = rewards.map((r) => r.key);
   const duplicates = keys.filter((k, i) => keys.indexOf(k) !== i);
-  const rarities = [...new Set(rewards.map((r) => String(r?.rarity || 'common').trim().toLowerCase() || 'common'))];
+  const rarities = [...new Set(rewards.filter((r) => Number(r.weight) > 0).map((r) => rarityOf(r, rarityWeights)))];
   const usesMultipleRarities = rarities.length > 1;
 
   const issues = [];
@@ -243,7 +191,7 @@ export function validatePool(rewards, targetTotal) {
   if (zeroOrNegative.length > 0) {
     issues.push({
       level: 'warning',
-      msg: `${zeroOrNegative.length} reward(s) con peso 0 o negativo (serán ignorados por ExcellentCrates).`,
+      msg: `${zeroOrNegative.length} reward(s) con peso 0 o negativo (el plugin no los sortea).`,
     });
   }
   if (duplicates.length > 0) {
@@ -255,87 +203,55 @@ export function validatePool(rewards, targetTotal) {
   if (usesMultipleRarities) {
     issues.push({
       level: 'info',
-      msg: `Esta crate mezcla ${rarities.length} rarezas (${rarities.join(', ')}). El % real ya no es weight/total plano — depende también del Weight de cada Rarity en el config.yml global. Ajustalo en el panel de Rarezas si el % no te cierra.`,
+      msg: `Esta crate mezcla ${rarities.length} rarezas (${rarities.join(', ')}). El % real depende también del Weight de cada rareza en el config.yml global (panel de Rarezas).`,
     });
   }
 
   return { total, residual, issues, usesMultipleRarities, rarities, healthy: issues.every((i) => i.level !== 'error') };
 }
 
-/**
- * Simulador de apertura tipo Monte Carlo, replicando el sorteo real de dos
- * pasos del plugin (Crate.rollReward): primero sortea una Rarity por su
- * Weight, después sortea el Reward dentro de esa Rarity por su Weight.
- * Matemáticamente equivalente a samplear directo con las probabilidades de
- * computePercentages(), pero simulado paso a paso para que el resultado
- * observado converja de la misma forma que in-game.
- */
-export function simulateOpenings(rewards, count = 10000, rng = Math.random, rarityWeights) {
-  const active = rewards.filter((r) => Number(r.weight) > 0);
-  if (active.length === 0) {
-    return { results: [], total: 0, count: 0 };
-  }
-
-  const groups = groupByRarity(active, rarityWeights);
-  const groupList = [...groups.values()].filter((g) => g.weight > 0 && g.sumWeights > 0);
-  const totalRarityWeight = groupList.reduce((acc, g) => acc + g.weight, 0);
-  const total = sumWeights(active);
-
-  if (groupList.length === 0 || totalRarityWeight <= 0) {
-    return { results: [], total: 0, count: 0 };
-  }
-
-  // Límites acumulados para el sorteo de Rarity (paso 1)
-  let acc = 0;
-  const rarityCumulative = groupList.map((g) => (acc += g.weight));
-  // Límites acumulados por reward, DENTRO de cada rareza (paso 2)
-  const rewardCumulativeByGroup = groupList.map((g) => {
-    let a = 0;
-    return g.rewards.map((r) => (a += Number(r.weight)));
-  });
-
-  const counts = new Map(active.map((r) => [r.key, 0]));
-
-  for (let i = 0; i < count; i++) {
-    const rarityRoll = rng() * totalRarityWeight;
-    const gIdx = binarySearch(rarityCumulative, rarityRoll);
-    const group = groupList[gIdx];
-    const cumulative = rewardCumulativeByGroup[gIdx];
-    const rewardRoll = rng() * group.sumWeights;
-    const rIdx = binarySearch(cumulative, rewardRoll);
-    const key = group.rewards[rIdx].key;
-    counts.set(key, counts.get(key) + 1);
-  }
-
-  const percents = computePercentages(active, rarityWeights);
-  const percentByKey = new Map(percents.map((r) => [r.key, r.percent]));
-
-  const results = active.map((r) => {
-    const hits = counts.get(r.key);
-    return {
-      key: r.key,
-      name: r.name,
-      weight: r.weight,
-      rarity: rarityId(r),
-      theoreticalPercent: percentByKey.get(r.key) ?? 0,
-      hits,
-      observedPercent: (hits / count) * 100,
-    };
-  });
-
-  return { results, total, count };
+/** Devuelve `rng => reward` que sortea igual que el plugin, o null si no hay nada sorteable. */
+export function buildRoller(rewards, rarityWeights) {
+  const groups = [...groupByRarity(rewards, rarityWeights).values()].filter((g) => g.weight > 0);
+  const total = groups.reduce((acc, g) => acc + g.weight, 0);
+  if (total <= 0) return null;
+  return (rng = Math.random) => {
+    const g = pickByWeight(groups, (x) => x.weight, total, rng);
+    return pickByWeight(g.rewards, (r) => Number(r.weight), g.sumWeights, rng);
+  };
 }
 
-function binarySearch(cumulative, target) {
-  let lo = 0;
-  let hi = cumulative.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (cumulative[mid] <= target) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
+function pickByWeight(items, weightOf, total, rng) {
+  let x = rng() * total;
+  for (const it of items) {
+    x -= weightOf(it);
+    if (x < 0) return it;
   }
-  return lo;
+  return items[items.length - 1];
+}
+
+/** Monte Carlo: tira `count` aperturas y compara % teórico vs observado. */
+export function simulateOpenings(rewards, count = 10000, rng = Math.random, rarityWeights) {
+  const roll = buildRoller(rewards, rarityWeights);
+  if (!roll) return { results: [], total: 0, count: 0 };
+
+  const hits = new Map();
+  for (let i = 0; i < count; i++) {
+    const key = roll(rng).key;
+    hits.set(key, (hits.get(key) || 0) + 1);
+  }
+
+  const results = computePercentages(rewards, rarityWeights)
+    .filter((r) => Number(r.weight) > 0)
+    .map((r) => ({
+      key: r.key,
+      name: r.displayName ?? r.name,
+      weight: r.weight,
+      rarity: rarityOf(r, rarityWeights),
+      theoreticalPercent: r.percent,
+      hits: hits.get(r.key) || 0,
+      observedPercent: ((hits.get(r.key) || 0) / count) * 100,
+    }));
+
+  return { results, total: sumWeights(results), count };
 }

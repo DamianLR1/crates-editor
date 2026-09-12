@@ -1,30 +1,29 @@
 // crateFile.js
-// Wrapper sobre la librería `yaml` (Eemeli Meurman) en modo "documento CST",
-// que preserva comentarios, orden de claves, estilo de comillas e indentación
-// del archivo original. Cualquier edición se hace vía set/delete sobre el
-// Document, y solo las líneas realmente tocadas cambian al reserializar.
+// Lectura y edición de crates de ExcellentCrates con el formato que escribe el
+// fork 6.3.3 del server (auditado contra Crate.java, AbstractReward.java,
+// CommandReward.java, ItemReward.java y LimitValues.java).
 //
-// Esto es lo que permite "edición quirúrgica": subís un pascuas2026.yml,
-// cambiás el Weight de un reward en la UI, y el diff en git muestra
-// una sola línea modificada, no el archivo entero reformateado.
+// Edición quirúrgica: cada cambio se aplica sobre un Document de `yaml` y
+// después patchText() reescribe SOLO los pares clave/valor que cambiaron; el
+// resto se copia byte a byte del texto original. Hace falta porque el plugin
+// guarda con SnakeYAML, que parte las líneas largas (NBT, nombres MiniMessage)
+// de una forma que la librería `yaml` no replica: reserializar el archivo
+// entero cambiaba cientos de líneas aunque los valores fueran idénticos.
+//
+// Se parsea como YAML 1.1 (lo que usa SnakeYAML) para que `yes`/`on`/`no` y
+// similares se lean igual que en el plugin y se escriban entre comillas.
 
-import { parseDocument, Scalar, YAMLMap, YAMLSeq } from 'yaml';
+import { parseDocument, Document, YAMLMap, YAMLSeq, isMap, isNode, isPair, isScalar } from 'yaml';
 
-/**
- * Carga un archivo de crate ExcellentCrates y devuelve:
- * - doc: el Document crudo (para reserializar preservando formato)
- * - model: una representación plana y amigable para la UI
- */
-export function loadCrateFile(text) {
-  const doc = parseDocument(text, { keepSourceTokens: true });
+const PARSE_OPTIONS = { version: '1.1' };
+const STRINGIFY_OPTIONS = {
+  lineWidth: 0, // sin wrap: una línea por valor
+  indentSeq: false, // "- item" al nivel de la clave, como SnakeYAML
+  singleQuote: true, // strings nuevos: plain si se puede, si no comillas simples
+};
 
-  if (doc.errors.length > 0) {
-    throw new CrateParseError(doc.errors);
-  }
-
-  const model = buildModel(doc);
-  return { doc, model, warnings: doc.warnings };
-}
+// DataVersion de 1.21.4, la que escribe el plugin del server en los Tag.
+export const DATA_VERSION = 4189;
 
 export class CrateParseError extends Error {
   constructor(yamlErrors) {
@@ -33,61 +32,110 @@ export class CrateParseError extends Error {
   }
 }
 
-/**
- * Construye un modelo plano legible desde el Document YAML.
- * No modifica el doc; solo lee. Cubre TODAS las secciones que usa
- * ExcellentCrates en un config.yml de crate real: metadata de item,
- * preview, animación, key, block (con hologram/effect/pushback),
- * milestones, y la lista completa de rewards con todos sus subcampos.
- */
+function parse(text) {
+  const doc = parseDocument(text, PARSE_OPTIONS);
+  if (doc.errors.length > 0) throw new CrateParseError(doc.errors);
+  return doc;
+}
+
+export function loadCrateFile(text) {
+  const doc = parse(text);
+  return { doc, model: buildModel(doc), warnings: doc.warnings };
+}
+
+/** Aplica `edit(doc)` y devuelve el texto nuevo, tocando solo lo que cambió. */
+export function editCrateText(text, edit) {
+  const original = parse(text);
+  const doc = parse(text);
+  edit(doc);
+  forceBlockStyleDeep(doc.contents);
+  return patchText(text, original, doc);
+}
+
+/** true si el archivo sale idéntico sin editar nada. */
+export function checkRoundTripFidelity(text) {
+  return editCrateText(text, () => {}) === text;
+}
+
+// ---- Modelo plano para la UI (solo lectura) ----
+
 function buildModel(doc) {
   const root = doc.contents;
-
-  const model = {
+  return {
     name: getScalar(root, 'Name'),
-    description: getSeqOfStrings(root, 'Description'),
-    itemProvider: buildItemProviderModel(root, ['ItemProvider']),
-    itemStackable: getScalar(root, 'ItemStackable'),
-    permissionRequired: getScalar(root, 'Permission_Required'),
-    preview: {
-      enabled: getScalar(root, ['Preview', 'Enabled']),
-      id: getScalar(root, ['Preview', 'Id']),
-    },
-    animation: {
-      enabled: getScalar(root, ['Animation', 'Enabled']),
-      id: getScalar(root, ['Animation', 'Id']),
-    },
+    description: getStrings(root, 'Description'),
+    itemProvider: buildItemModel(getNode(root, ['ItemProvider'])),
+    itemStackable: getScalar(root, 'ItemStackable') ?? true, // default del plugin
+    permissionRequired: getScalar(root, 'Permission_Required') ?? false,
+    preview: { enabled: getScalar(root, ['Preview', 'Enabled']), id: getScalar(root, ['Preview', 'Id']) },
+    animation: { enabled: getScalar(root, ['Animation', 'Enabled']), id: getScalar(root, ['Animation', 'Id']) },
     opening: {
-      cooldown: getScalar(root, ['Opening', 'Cooldown']),
+      cooldown: getScalar(root, ['Opening', 'Cooldown']) ?? 0,
+      // Opening.Cost.<moneda>: monto (EconomyBridge)
+      costs: getPairs(root, ['Opening', 'Cost']).map(([id, v]) => ({ id: String(id), amount: Number(isScalar(v) ? v.value : v) || 0 })),
     },
-    key: {
-      required: getScalar(root, ['Key', 'Required']),
-      ids: getSeqOfStrings(root, ['Key', 'Ids']),
-    },
+    key: { required: getScalar(root, ['Key', 'Required']), ids: getStrings(root, ['Key', 'Ids']) },
     block: {
-      positions: getSeqOfStrings(root, ['Block', 'Positions']),
+      positions: getStrings(root, ['Block', 'Positions']),
       pushbackEnabled: getScalar(root, ['Block', 'Pushback', 'Enabled']),
       hologramEnabled: getScalar(root, ['Block', 'Hologram', 'Enabled']),
       hologramTemplate: getScalar(root, ['Block', 'Hologram', 'Template']),
-      hologramYOffset: getScalar(root, ['Block', 'Hologram', 'Y_Offset']),
-      effectModel: getScalar(root, ['Block', 'Effect', 'Model']),
+      hologramYOffset: getScalar(root, ['Block', 'Hologram', 'Y_Offset']) ?? 0,
+      effectModel: getScalar(root, ['Block', 'Effect', 'Model']) ?? 'none',
       effectParticleName: getScalar(root, ['Block', 'Effect', 'Particle', 'Name']),
     },
     milestones: {
       repeatable: getScalar(root, ['Milestones', 'Repeatable']),
+      // `key` queda crudo ('0' o 0) para poder editarlo por path
+      list: getPairs(root, ['Milestones', 'List']).map(([key, node]) => ({
+        key,
+        rewardId: getScalar(node, 'Reward_Id'),
+        openings: Number(getScalar(node, 'Openings')) || 0,
+      })),
     },
     dataVersion: getScalar(root, '_dataver'),
     rewards: buildRewardsModel(root),
   };
-
-  return model;
 }
 
-function buildItemProviderModel(root, path) {
-  const node = getNode(root, path);
-  if (!node) return null;
+function buildRewardsModel(root) {
+  return getPairs(root, ['Rewards', 'List']).map(([rawKey, node]) => {
+    const limit = (side) => ({
+      enabled: getScalar(node, ['Win_Limit', side, 'Enabled']) ?? false,
+      amount: getScalar(node, ['Win_Limit', side, 'Amount']) ?? -1,
+      cooldown: getScalar(node, ['Win_Limit', side, 'Cooldown']) ?? 0,
+      cooldownStep: getScalar(node, ['Win_Limit', side, 'CooldownStep']) ?? 1,
+    });
+    const commands = getStrings(node, 'Commands');
+    const r = {
+      key: String(rawKey),
+      // RewardFactory: sin Type es COMMAND si tiene comandos, si no ITEM
+      type: getScalar(node, 'Type') ?? (commands.length ? 'COMMAND' : 'ITEM'),
+      weight: Number(getScalar(node, 'Weight')) || 0,
+      rarity: getScalar(node, 'Rarity'),
+      broadcast: getScalar(node, 'Broadcast') ?? false,
+      placeholderApply: getScalar(node, 'Placeholder_Apply') ?? false,
+      name: getScalar(node, 'Name'),
+      description: getStrings(node, 'Description'),
+      commands,
+      ignoredForPermissions: getStrings(node, 'Ignored_For_Permissions'),
+      requiredPermissions: getStrings(node, 'Required_Permissions'),
+      customPreview: getScalar(node, 'Custom_Preview') ?? false,
+      winLimit: { player: limit('Player'), global: limit('Global') },
+      previewData: buildItemModel(getNode(node, ['PreviewData'])),
+      itemsData: getPairs(node, ['ItemsData']).map(([index, item]) => ({ index: String(index), ...buildItemModel(item) })),
+    };
+    // ITEM muestra su primer ítem salvo Custom_Preview (ItemReward.getPreview)
+    const shown = r.type === 'ITEM' && !r.customPreview ? r.itemsData[0] : r.previewData;
+    r.displayName = String(r.name || itemLabel(shown) || r.key);
+    return r;
+  });
+}
+
+function buildItemModel(node) {
+  if (!isMap(node)) return null;
   return {
-    type: getScalar(node, 'Type'),
+    type: getScalar(node, 'Type') ?? 'VANILLA', // ItemTypes.read: sin Type = VANILLA
     handler: getScalar(node, 'Handler'),
     itemId: getScalar(node, 'ItemId'),
     amount: getScalar(node, 'Amount'),
@@ -96,343 +144,205 @@ function buildItemProviderModel(root, path) {
   };
 }
 
-function buildRewardsModel(root) {
-  const list = getNode(root, ['Rewards', 'List']);
-  if (!list || !(list instanceof YAMLMap)) return [];
-
-  return list.items.map((pair) => {
-    const key = String(pair.key.value ?? pair.key);
-    const node = pair.value;
-    return {
-      key,
-      type: getScalar(node, 'Type'),
-      weight: Number(getScalar(node, 'Weight')) || 0,
-      rarity: getScalar(node, 'Rarity'),
-      broadcast: getScalar(node, 'Broadcast'),
-      placeholderApply: getScalar(node, 'Placeholder_Apply'),
-      name: getScalar(node, 'Name'),
-      description: getSeqOfStrings(node, 'Description'),
-      commands: getSeqOfStrings(node, 'Commands'),
-      ignoredForPermissions: getSeqOfStrings(node, 'Ignored_For_Permissions'),
-      requiredPermissions: getSeqOfStrings(node, 'Required_Permissions'),
-      customPreview: getScalar(node, 'Custom_Preview'),
-      winLimit: buildWinLimitModel(node),
-      previewData: buildPreviewDataModel(node, ['PreviewData']),
-      // ITEM rewards multi-parte (ej: swordespada_pascuas_1) usan ItemsData
-      // como mapa de índices -> item, en vez de un único PreviewData.
-      itemsData: buildItemsDataModel(node),
-      // guardamos el path para poder ubicarlo rápido al editar
-      _path: ['Rewards', 'List', key],
-    };
-  });
+/**
+ * Nombre legible de un ítem (PreviewData / ItemsData / ItemProvider).
+ * ponytail: saca MMOITEMS_NAME o el id del SNBT con regex, sin parser SNBT;
+ * alcanza para mostrar, no para editar el NBT.
+ */
+export function itemLabel(item) {
+  if (!item) return null;
+  if (item.type === 'CUSTOM') return `${item.handler}:${item.itemId}` + (item.amount > 1 ? ` x${item.amount}` : '');
+  const tag = String(item.tagValue ?? '');
+  const last = (re) => [...tag.matchAll(re)].at(-1)?.[1]; // el id/count de nivel superior van al final
+  const name = tag.match(/MMOITEMS_NAME:"((?:[^"\\]|\\.)*)"/)?.[1] ?? last(/\bid:"(?:minecraft:)?([^"]+)"/g);
+  if (!name) return null;
+  const count = Number(last(/\bcount:(\d+)/g) ?? 1);
+  return count > 1 ? `${name} x${count}` : name;
 }
-
-function buildWinLimitModel(node) {
-  const wl = getNode(node, ['Win_Limit']);
-  if (!wl) return null;
-  // NOTA: CooldownStep no existe en el plugin real (auditado contra el source
-  // Java, AbstractReward/LimitValues) — lo habíamos inventado sin verificar.
-  // Se dejan Enabled/Amount/Cooldown, que sí son los campos reales del schema
-  // viejo Player/Global (el que el plugin migra automáticamente a "Limits" al
-  // cargar, pero que sigue siendo lo que escriben las versiones <=6.3.x).
-  const side = (name) => ({
-    enabled: getScalar(node, ['Win_Limit', name, 'Enabled']),
-    amount: getScalar(node, ['Win_Limit', name, 'Amount']),
-    cooldown: getScalar(node, ['Win_Limit', name, 'Cooldown']),
-  });
-  return { player: side('Player'), global: side('Global') };
-}
-
-function buildPreviewDataModel(node, path) {
-  const pd = getNode(node, path);
-  if (!pd) return null;
-  return {
-    type: getScalar(pd, 'Type'),
-    handler: getScalar(pd, 'Handler'),
-    itemId: getScalar(pd, 'ItemId'),
-    amount: getScalar(pd, 'Amount'),
-    tagValue: getScalar(pd, ['Tag', 'Value']),
-    tagDataVersion: getScalar(pd, ['Tag', 'DataVersion']),
-  };
-}
-
-function buildItemsDataModel(node) {
-  const itemsData = getNode(node, ['ItemsData']);
-  if (!itemsData || !(itemsData instanceof YAMLMap)) return null;
-  return itemsData.items.map((pair) => ({
-    index: String(pair.key.value ?? pair.key),
-    type: getScalar(pair.value, 'Type'),
-    handler: getScalar(pair.value, 'Handler'),
-    itemId: getScalar(pair.value, 'ItemId'),
-    amount: getScalar(pair.value, 'Amount'),
-  }));
-}
-
-// ---- Helpers de lectura segura sobre nodos YAML ----
 
 function getNode(root, path) {
-  const p = Array.isArray(path) ? path : [path];
   try {
-    return root.getIn(p, true);
+    return root?.getIn(path, true);
   } catch {
     return undefined;
   }
 }
 
 function getScalar(root, path) {
+  const node = getNode(root, [path].flat());
+  return isScalar(node) ? node.value : node;
+}
+
+function getStrings(root, path) {
+  const node = getNode(root, [path].flat());
+  return node?.items ? node.items.map((it) => String((isScalar(it) ? it.value : it) ?? '')) : [];
+}
+
+function getPairs(root, path) {
   const node = getNode(root, path);
-  if (node == null) return undefined;
-  if (node instanceof Scalar) return node.value;
-  return node;
+  return isMap(node) ? node.items.map((p) => [keyOf(p), p.value]) : [];
 }
 
-function getSeqOfStrings(root, path) {
-  const node = getNode(root, path);
-  if (!node || !node.items) return [];
-  return node.items.map((it) => (it instanceof Scalar ? it.value : String(it)));
+const keyOf = (pair) => (isScalar(pair.key) ? pair.key.value : pair.key);
+
+// ---- Edición (se llaman dentro de editCrateText) ----
+
+const rewardPath = (key, ...rest) => ['Rewards', 'List', key, ...rest];
+
+// En vez de doc.setIn: con YAML 1.1 la librería crea los mapas intermedios
+// que faltan como `!!omap` (SnakeYAML no lo lee como sección normal).
+function setIn(doc, path, value) {
+  let node = doc.contents;
+  for (const key of path.slice(0, -1)) {
+    let next = node.get(key, true);
+    if (!isMap(next)) node.set(key, (next = new YAMLMap()));
+    node = next;
+  }
+  node.set(path[path.length - 1], isNode(value) ? value : doc.createNode(value));
 }
 
-// ---- Edición quirúrgica ----
-
-/**
- * Actualiza el Weight de un reward específico dentro del Document,
- * preservando todo lo demás (comentarios, formato, otros rewards).
- */
-export function setRewardWeight(doc, rewardKey, newWeight) {
-  const path = ['Rewards', 'List', rewardKey, 'Weight'];
-  setScalarPreservingStyle(doc, path, newWeight);
+export function setRewardWeight(doc, key, weight) {
+  setField(doc, rewardPath(key, 'Weight'), weight);
 }
 
-/**
- * Actualiza cualquier campo escalar de un reward (Name, Rarity, Broadcast, etc.)
- * `field` puede ser un string simple ('Name') o un array de path anidado
- * (['Win_Limit', 'Player', 'Enabled']).
- */
-export function setRewardField(doc, rewardKey, field, value) {
-  const fieldPath = Array.isArray(field) ? field : [field];
-  const path = ['Rewards', 'List', rewardKey, ...fieldPath];
-  setScalarPreservingStyle(doc, path, value);
+/** `field` puede ser 'Name' o un path ['Win_Limit', 'Player', 'Enabled']. */
+export function setRewardField(doc, key, field, value) {
+  setField(doc, rewardPath(key, ...[field].flat()), value);
 }
 
-/**
- * Actualiza un campo escalar en cualquier parte del documento (no solo rewards),
- * por ejemplo ['Block', 'Hologram', 'Y_Offset'] o ['Name'].
- */
+/** Setea un valor en cualquier path. Si ya había un escalar conserva su estilo (comillas, "10.0"). */
 export function setField(doc, path, value) {
-  setScalarPreservingStyle(doc, path, value);
+  if (Array.isArray(value)) return setStringSeq(doc, path, value);
+  const existing = doc.getIn(path, true);
+  if (isScalar(existing)) existing.value = value;
+  else setIn(doc, path, value);
 }
 
-/**
- * Actualiza una secuencia de strings (Description, Commands, Ids, Positions, etc.)
- * en cualquier path del documento. Reemplaza el contenido preservando el nodo
- * seq si ya existe (para no perder anchors/comments del seq en sí).
- */
 export function setStringSeq(doc, path, values) {
-  const existing = doc.getIn(path, true);
-  if (existing instanceof YAMLSeq) {
-    existing.items = values.map((v) => doc.createNode(v));
-  } else {
-    doc.setIn(path, values);
-  }
+  const seq = doc.createNode(values);
+  seq.flow = values.length === 0; // "Key: []" en la misma línea, como SnakeYAML
+  setIn(doc, path, seq);
 }
 
-/**
- * Setea un valor escalar en el path dado. Si el nodo ya existe como Scalar,
- * reusa su Scalar (preserva tipo de comillas / estilo) y solo cambia `.value`.
- * Si no existe, lo crea con `doc.setIn`.
- */
-function setScalarPreservingStyle(doc, path, value) {
-  const existing = doc.getIn(path, true);
-  if (existing instanceof Scalar) {
-    existing.value = value;
-  } else {
-    doc.setIn(path, value);
-  }
+/** Reemplaza un sub-árbol entero (ej. PreviewData al pasar de VANILLA a CUSTOM). */
+export function setNode(doc, path, obj) {
+  setIn(doc, path, obj);
 }
 
-/**
- * Agrega un nuevo reward completo al final de Rewards.List, con la
- * estructura COMPLETA que usa ExcellentCrates (incluyendo PreviewData
- * y Win_Limit detallado), para que el ítem se vea y funcione en el
- * juego exactamente igual que un reward creado desde el editor in-game.
- */
-export function addReward(doc, key, rewardData) {
-  const list = doc.getIn(['Rewards', 'List'], true);
-  const newNode = doc.createNode(rewardToPlainObject(rewardData));
-  forceBlockStyleDeep(newNode);
-  if (list instanceof YAMLMap) {
-    // Si "List" empezó vacío en estilo flow (ej. `List: {}` del template de
-    // caja nueva), la librería `yaml` conserva ese flow:true al agregar items,
-    // lo que produce todo el pool en una sola línea estilo JSON en vez del
-    // formato de bloque que realmente escribe el plugin (ver pascuas2026.yml).
-    // Forzamos block style apenas deja de estar vacío.
-    list.flow = false;
-    list.set(key, newNode);
-  } else {
-    doc.setIn(['Rewards', 'List', key], newNode);
-  }
+/** Borra un path; si el mapa padre queda vacío también lo borra (el plugin no deja `Cost: {}`). */
+export function deleteField(doc, path) {
+  doc.deleteIn(path);
+  const parentPath = path.slice(0, -1);
+  const parent = parentPath.length > 0 ? doc.getIn(parentPath, true) : null;
+  if (isMap(parent) && parent.items.length === 0) doc.deleteIn(parentPath);
 }
 
-/**
- * Recorre recursivamente un nodo recién creado con doc.createNode() y le da
- * el mismo "look" que el propio plugin usa al guardar (ver pascuas2026.yml):
- *  - Mapas/secuencias NO vacíos van en estilo bloque (createNode() a veces
- *    los colapsa a flow, ej. Win_Limit: { Player: {...} }).
- *  - Colecciones VACÍAS se dejan en flow, que es como se renderizan `[]`/`{}`
- *    inline (forzar flow:false en una vacía rompe el indentado: yaml emite
- *    "Ignored_For_Permissions:\n      []" en vez de "Ignored_For_Permissions: []").
- *  - Strings van con comillas simples ('...'), que es lo que usa el plugin
- *    (Name, Description, Commands, etc.) en vez de las dobles que createNode()
- *    elige por default.
- */
-function forceBlockStyleDeep(node) {
-  if (!node || typeof node !== 'object') return;
-  if (node instanceof YAMLMap || node instanceof YAMLSeq) {
-    if ((node.items || []).length > 0) {
-      node.flow = false;
-    }
-    for (const item of node.items || []) {
-      // Los items de un YAMLMap son { key, value } pairs: solo recorremos el
-      // value para decidir comillas/estilo. Las keys (Type, Name, Weight...)
-      // siempre van sin comillas en el plugin, así que no las tocamos.
-      if (item && typeof item === 'object' && 'value' in item && 'key' in item) {
-        forceBlockStyleDeep(item.value);
-      } else {
-        forceBlockStyleDeep(item);
-      }
-    }
-  }
-  // Nota sobre comillas: NO forzamos node.type acá. Los nodos nuevos salen
-  // sin type explícito de doc.createNode(), y serializeCrateFile() les pasa
-  // defaultStringType: 'QUOTE_SINGLE' al serializar — eso hace que la
-  // librería use PLAIN cuando es seguro (Type: COMMAND) y comillas SIMPLES
-  // (nunca dobles) cuando hacen falta, igual que el plugin real. Los nodos
-  // que ya existían en el archivo original conservan su type de origen y no
-  // se ven afectados por esa opción.
+export function addReward(doc, key, data) {
+  const node = doc.createNode(rewardToPlainObject(data));
+  node.get('Weight', true).minFractionDigits = 1; // el plugin guarda doubles: "10.0"
+  setIn(doc, rewardPath(key), node);
 }
 
-/**
- * Elimina un reward por su key.
- */
 export function deleteReward(doc, key) {
-  doc.deleteIn(['Rewards', 'List', key]);
+  doc.deleteIn(rewardPath(key));
 }
 
-/**
- * Renombra la key de un reward preservando su contenido y posición relativa.
- */
 export function renameReward(doc, oldKey, newKey) {
   const list = doc.getIn(['Rewards', 'List'], true);
-  if (!(list instanceof YAMLMap)) return;
-  const idx = list.items.findIndex((p) => String(p.key.value ?? p.key) === oldKey);
-  if (idx === -1) return;
-  const pair = list.items[idx];
-  pair.key = doc.createNode(newKey);
+  const pair = isMap(list) && list.items.find((p) => String(keyOf(p)) === oldKey);
+  if (pair) pair.key = doc.createNode(newKey);
 }
 
-/**
- * Estructura COMPLETA de un reward tal como la genera el editor in-game
- * de ExcellentCrates. Incluye PreviewData (para que el ítem se vea bien
- * en el menú de preview de la crate) y Win_Limit con los 3 subcampos reales
- * (Enabled/Amount/Cooldown) para Player y Global — CooldownStep NO existe en
- * el plugin real (auditado contra el source Java, se había inventado sin
- * verificar contra AbstractReward/LimitValues).
- */
+/** Milestones.List.<n> con n siguiente al mayor (el plugin reindexa 0..N al guardar). */
+export function addMilestone(doc, rewardId, openings) {
+  const list = doc.getIn(['Milestones', 'List'], true);
+  const ids = isMap(list) ? list.items.map((p) => Number(keyOf(p))).filter(Number.isFinite) : [];
+  const id = String(ids.length ? Math.max(...ids) + 1 : 0);
+  setIn(doc, ['Milestones', 'List', id], { Reward_Id: rewardId, Openings: openings });
+}
+
+/** PreviewData por defecto: el de CommandReward es un command_block vanilla. */
+export function defaultPreviewData(type) {
+  return type === 'CUSTOM'
+    ? { Type: 'CUSTOM', Handler: 'MMOItems', ItemId: '', Amount: 1 }
+    : { Type: 'VANILLA', Tag: { Value: '{count:1,id:"minecraft:command_block"}', DataVersion: DATA_VERSION } };
+}
+
+// Mismo orden de claves que AbstractReward.write + CommandReward.writeAdditional.
 function rewardToPlainObject(r) {
-  const obj = {
-    Type: r.type || 'COMMAND',
-  };
-
-  // Solo incluir PreviewData si el reward no es del tipo ITEM con ItemsData propio
-  if (r.previewData || r.type !== 'ITEM') {
-    obj.PreviewData = previewDataToPlainObject(r.previewData);
-  }
-
-  Object.assign(obj, {
-    // Default real del plugin al crear un reward desde el editor in-game
-    // (RewardCreationDialog: this.setWeight(10D)) — antes usábamos 1.
-    Weight: r.weight ?? 10,
+  const limit = () => ({ Enabled: false, Amount: -1, Cooldown: 0, CooldownStep: 1 });
+  return {
+    Type: 'COMMAND',
+    PreviewData: defaultPreviewData('VANILLA'),
+    Weight: r.weight ?? 10, // AbstractReward: setWeight(10D)
     Rarity: r.rarity || 'common',
-    Broadcast: r.broadcast ?? false,
-    Placeholder_Apply: r.placeholderApply ?? false,
-    Win_Limit: {
-      Player: {
-        Enabled: r.winLimit?.player?.enabled ?? false,
-        Amount: r.winLimit?.player?.amount ?? -1,
-        Cooldown: r.winLimit?.player?.cooldown ?? 0,
-      },
-      Global: {
-        Enabled: r.winLimit?.global?.enabled ?? false,
-        Amount: r.winLimit?.global?.amount ?? -1,
-        Cooldown: r.winLimit?.global?.cooldown ?? 0,
-      },
-    },
-    Ignored_For_Permissions: r.ignoredForPermissions?.length ? r.ignoredForPermissions : [],
-    Required_Permissions: r.requiredPermissions?.length ? r.requiredPermissions : [],
+    Broadcast: false,
+    Placeholder_Apply: false,
+    Win_Limit: { Player: limit(), Global: limit() },
+    Ignored_For_Permissions: [],
+    Required_Permissions: [],
     Name: r.name || '&eNuevo Premio',
-    Description: r.description?.length ? r.description : ['&7Descripción'],
-    Commands: r.commands?.length ? r.commands : [],
-  });
-
-  return obj;
-}
-
-function previewDataToPlainObject(pd) {
-  if (!pd) {
-    // Default: VANILLA paper, editable después desde la UI de PreviewData
-    return { Type: 'VANILLA', Tag: { Value: '{count:1,id:"minecraft:paper"}', DataVersion: 4189 } };
-  }
-  if (pd.type === 'CUSTOM') {
-    return {
-      Type: 'CUSTOM',
-      Handler: pd.handler || 'MMOItems',
-      ItemId: pd.itemId || '',
-      Amount: pd.amount ?? 1,
-    };
-  }
-  return {
-    Type: 'VANILLA',
-    Tag: {
-      Value: pd.tagValue || '{count:1,id:"minecraft:paper"}',
-      DataVersion: pd.tagDataVersion ?? 4189,
-    },
+    Description: r.description ?? [],
+    Commands: r.commands ?? [],
   };
 }
 
 /**
- * Reserializa el Document completo a texto YAML.
- * Con `keepSourceTokens`, las partes no tocadas mantienen su formato exacto.
+ * Colecciones no vacías en estilo bloque (createNode/setIn a veces generan
+ * flow: `Win_Limit: { Player: ... }`). Las vacías quedan flow: `Ids: []`.
  */
-export function serializeCrateFile(doc) {
-  return doc.toString({
-    lineWidth: 0, // no forzar wrap de líneas largas (rompe los lore con colores)
-    indentSeq: false, // ExcellentCrates/el editor in-game no indenta "- item" bajo su clave padre
-    // Solo afecta nodos SIN type explícito (nodos nuevos creados por
-    // addReward/etc). Los strings ya existentes conservan el estilo
-    // original del archivo. Para los nuevos: plain cuando es seguro,
-    // comillas simples (nunca dobles) cuando hacen falta — así matchea
-    // el formato real que escribe el plugin (ver pascuas2026.yml).
-    // Afecta solo a nodos SIN type explícito (nodos nuevos de addReward/etc,
-    // ver forceBlockStyleDeep). El default de la librería ya prueba PLAIN
-    // primero (Type: COMMAND queda sin comillas); cuando plain no alcanza
-    // (ej. "&eNuevo Premio", que empieza con indicador reservado), singleQuote
-    // hace que use comillas simples en vez de dobles — igual que el plugin.
-    singleQuote: true,
-  });
+function forceBlockStyleDeep(node) {
+  if (!(node instanceof YAMLMap || node instanceof YAMLSeq)) return;
+  if (node.items.length > 0) node.flow = false;
+  for (const item of node.items) forceBlockStyleDeep(isPair(item) ? item.value : item);
+}
+
+// ---- Serialización por parches ----
+
+function patchText(src, original, doc) {
+  const root = original.contents;
+  if (!isBlockMap(root) || !isMap(doc.contents)) return doc.toString(STRINGIFY_OPTIONS);
+  return src.slice(0, lineStart(src, root.items[0].key.range[0])) + patchMap(src, root, doc.contents, src.length);
 }
 
 /**
- * Verifica que un documento sin modificar reserializa byte-a-byte igual
- * al texto original. Útil para detectar archivos con estilos YAML que
- * nuestra config de serialización todavía no replica bien, ANTES de
- * mostrarle al usuario un diff sucio.
+ * Emite los pares de `next` reusando el texto de `prev` (el mismo mapa antes
+ * de editar) para todo par cuyo valor no cambió. `end` es donde termina el
+ * texto de `prev` en `src`. Un par cambiado se re-emite solo él; si es un
+ * mapa, se baja un nivel para re-emitir solo los hijos que cambiaron.
  */
-export function checkRoundTripFidelity(originalText) {
-  const doc = parseDocument(originalText, { keepSourceTokens: true });
-  const reserialized = serializeCrateFile(doc);
-  return {
-    identical: reserialized === originalText,
-    original: originalText,
-    reserialized,
-  };
+function patchMap(src, prev, next, end) {
+  const indent = column(src, prev.items[0].key.range[0]);
+  let out = '';
+  for (const pair of next.items) {
+    const i = prev.items.findIndex((p) => keyOf(p) === keyOf(pair));
+    if (i === -1) {
+      out += freshPair(pair, indent);
+      continue;
+    }
+    const old = prev.items[i];
+    const start = lineStart(src, old.key.range[0]);
+    const stop = i + 1 < prev.items.length ? lineStart(src, prev.items[i + 1].key.range[0]) : end;
+    if (sameValue(old.value, pair.value)) {
+      out += src.slice(start, stop);
+    } else if (isBlockMap(old.value) && isBlockMap(pair.value)) {
+      out += src.slice(start, lineStart(src, old.value.items[0].key.range[0])) + patchMap(src, old.value, pair.value, stop);
+    } else {
+      out += freshPair(pair, indent);
+    }
+  }
+  return out;
 }
+
+function freshPair(pair, indent) {
+  const doc = new Document(null, PARSE_OPTIONS);
+  doc.contents = new YAMLMap();
+  doc.contents.items.push(pair);
+  return doc.toString(STRINGIFY_OPTIONS).replace(/^(?=.)/gm, ' '.repeat(indent));
+}
+
+const isBlockMap = (node) => isMap(node) && !node.flow && node.items.length > 0;
+const toJS = (node) => (typeof node?.toJSON === 'function' ? node.toJSON() : node);
+const sameValue = (a, b) => JSON.stringify(toJS(a)) === JSON.stringify(toJS(b));
+const lineStart = (src, pos) => src.lastIndexOf('\n', pos - 1) + 1;
+const column = (src, pos) => pos - lineStart(src, pos);

@@ -1,117 +1,57 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import {
   loadCrateFile,
-  serializeCrateFile,
+  editCrateText,
   setRewardWeight,
   setRewardField,
   setField,
   setStringSeq,
+  setNode,
+  deleteField,
   addReward,
   deleteReward,
   renameReward,
+  addMilestone,
 } from '../lib/crateFile.js';
 import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
 import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
+import { readServerFolder, inspectCrate } from '../lib/serverContext.js';
 
 const RARITY_WEIGHTS_STORAGE_KEY = 'crateforge.rarityWeights';
 
 function loadStoredRarityWeights() {
   try {
-    const raw = localStorage.getItem(RARITY_WEIGHTS_STORAGE_KEY);
-    if (!raw) return { ...DEFAULT_RARITY_WEIGHTS };
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(localStorage.getItem(RARITY_WEIGHTS_STORAGE_KEY));
     return parsed && typeof parsed === 'object' ? parsed : { ...DEFAULT_RARITY_WEIGHTS };
   } catch {
     return { ...DEFAULT_RARITY_WEIGHTS };
   }
 }
 
-const CrateContext = createContext(null);
+function storeRarityWeights(weights) {
+  try { localStorage.setItem(RARITY_WEIGHTS_STORAGE_KEY, JSON.stringify(weights)); } catch { /* noop */ }
+}
 
-export function CrateProvider({ children }) {
-  const [fileName, setFileName] = useState(null);
-  const [doc, setDoc] = useState(null);
-  const [model, setModel] = useState(null);
-  const [targetTotal, setTargetTotal] = useState(1000);
-  const [history, setHistory] = useState([]); // para undo simple
-  const [error, setError] = useState(null);
-  const [conversionWarnings, setConversionWarnings] = useState(null); // null = no hubo conversión
+const weightsOf = (rarities) => Object.fromEntries(Object.entries(rarities).map(([id, r]) => [id, r.weight]));
 
-  // Rewards.Rarities.<id>.Weight vive en el config.yml GLOBAL del server
-  // (no en el archivo de la crate individual), así que no lo leemos de ningún
-  // YAML — es configuración del editor, persistida localmente. Ver
-  // weightMath.js para el porqué esto afecta el % real de cada reward.
-  const [rarityWeights, setRarityWeightsState] = useState(() => loadStoredRarityWeights());
-
-  const setRarityWeight = useCallback((id, weight) => {
-    setRarityWeightsState((prev) => {
-      const next = { ...prev, [String(id).toLowerCase()]: Number(weight) || 0 };
-      try { localStorage.setItem(RARITY_WEIGHTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* noop */ }
-      return next;
-    });
-  }, []);
-
-  const resetRarityWeights = useCallback(() => {
-    const next = { ...DEFAULT_RARITY_WEIGHTS };
-    setRarityWeightsState(next);
-    try { localStorage.setItem(RARITY_WEIGHTS_STORAGE_KEY, JSON.stringify(next)); } catch { /* noop */ }
-  }, []);
-
-  const openFile = useCallback((name, text) => {
-    try {
-      const { doc: newDoc, model: newModel } = loadCrateFile(text);
-      setFileName(name);
-      setDoc(newDoc);
-      setModel(newModel);
-      setHistory([]);
-      setError(null);
-      setConversionWarnings(null);
-    } catch (e) {
-      setError(e.message || String(e));
-    }
-  }, []);
-
-  /**
-   * Convierte un archivo de SpecializedCrates (formato "Almas.crate") a un
-   * config.yml de ExcellentCrates equivalente y lo abre en el editor.
-   * Ver src/lib/specializedConverter.js para el detalle de mapeo chance→Weight.
-   */
-  const convertSpecializedFile = useCallback((name, text) => {
-    try {
-      const parsed = parseSpecializedCrate(text);
-      const yaml = buildExcellentCratesYaml(parsed);
-      const { doc: newDoc, model: newModel } = loadCrateFile(yaml);
-      const outName = name.replace(/\.(crate|ya?ml)$/i, '') + '.yml';
-      setFileName(outName);
-      setDoc(newDoc);
-      setModel(newModel);
-      setTargetTotal(parsed.suggestedTargetTotal || 1000);
-      setHistory([]);
-      setError(null);
-      setConversionWarnings({
-        sourceName: name,
-        rewardCount: parsed.rewards.length,
-        items: parsed.warnings,
-      });
-    } catch (e) {
-      setError(e.message || String(e));
-    }
-  }, []);
-
-  const dismissConversionWarnings = useCallback(() => setConversionWarnings(null), []);
-
-  const newBlankFile = useCallback(() => {
-    const blankYaml = `Name: '&eNueva Caja'
+// Caja nueva: ItemProvider (sin él el ítem de la caja sale como barrera) y
+// _dataver (sin él el plugin hace un backup y "migra" el archivo al cargarlo).
+const BLANK_CRATE = `Name: '&eNueva Caja'
 Description:
 - '&7Descripcion de la caja'
+ItemProvider:
+  Type: VANILLA
+  Tag:
+    Value: '{count:1,id:"minecraft:chest"}'
+    DataVersion: 4189
 ItemStackable: false
 Permission_Required: false
 Preview:
   Enabled: true
-  Id: nueva_caja
+  Id: default
 Animation:
   Enabled: true
-  Id: nueva_caja
+  Id: roulette
 Opening:
   Cooldown: 0
 Key:
@@ -124,7 +64,7 @@ Block:
     Enabled: false
   Hologram:
     Enabled: false
-    Template: nueva_caja
+    Template: default
     Y_Offset: 0.0
   Effect:
     Model: simple
@@ -132,121 +72,155 @@ Block:
       Name: EGG_CRACK
 Milestones:
   Repeatable: false
+_dataver: 600
 Rewards:
   List: {}
 `;
-    openFile('nueva_caja.yml', blankYaml);
-  }, [openFile]);
 
-  const refreshModelFromDoc = useCallback((newDoc) => {
-    const { model: newModel } = loadCrateFile(serializeCrateFile(newDoc));
-    setModel(newModel);
+const CrateContext = createContext(null);
+
+export function CrateProvider({ children }) {
+  const [fileName, setFileName] = useState(null);
+  const [text, setText] = useState(null); // el YAML es la única fuente de verdad
+  const [history, setHistory] = useState([]); // textos anteriores, para deshacer
+  const [error, setError] = useState(null);
+  const [targetTotal, setTargetTotal] = useState(1000);
+  const [conversionWarnings, setConversionWarnings] = useState(null); // null = no hubo conversión
+  const [server, setServer] = useState(null); // carpeta plugins/ExcellentCrates abierta
+
+  // Rewards.Rarities vive en el config.yml GLOBAL: se carga de la carpeta del
+  // server o se configura a mano (persistido localmente).
+  const [rarityWeights, setRarityWeightsState] = useState(loadStoredRarityWeights);
+
+  const model = useMemo(() => (text == null ? null : loadCrateFile(text).model), [text]);
+
+  const setRarityWeights = useCallback((next) => {
+    setRarityWeightsState(next);
+    storeRarityWeights(next);
   }, []);
 
-  const pushHistory = useCallback(() => {
-    if (!doc) return;
-    setHistory((h) => [...h.slice(-19), serializeCrateFile(doc)]);
-  }, [doc]);
-
-  const undo = useCallback(() => {
-    setHistory((h) => {
-      if (h.length === 0) return h;
-      const last = h[h.length - 1];
-      const { doc: restoredDoc, model: restoredModel } = loadCrateFile(last);
-      setDoc(restoredDoc);
-      setModel(restoredModel);
-      return h.slice(0, -1);
+  const setRarityWeight = useCallback((id, weight) => {
+    setRarityWeightsState((prev) => {
+      const next = { ...prev, [String(id).toLowerCase()]: Number(weight) || 0 };
+      storeRarityWeights(next);
+      return next;
     });
   }, []);
 
-  const updateWeight = useCallback((rewardKey, newWeight) => {
-    if (!doc) return;
-    pushHistory();
-    setRewardWeight(doc, rewardKey, newWeight);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
+  const resetRarityWeights = useCallback(() => {
+    setRarityWeights(server?.rarities ? weightsOf(server.rarities) : { ...DEFAULT_RARITY_WEIGHTS });
+  }, [server, setRarityWeights]);
 
-  /** field puede ser 'Name' o ['Win_Limit', 'Player', 'Enabled'] */
-  const updateField = useCallback((rewardKey, field, value) => {
-    if (!doc) return;
-    pushHistory();
-    setRewardField(doc, rewardKey, field, value);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
+  const open = useCallback((name, src, warnings = null) => {
+    try {
+      loadCrateFile(src);
+    } catch (e) {
+      setError(e.message || String(e));
+      return;
+    }
+    setFileName(name);
+    setText(src);
+    setHistory([]);
+    setError(null);
+    setConversionWarnings(warnings);
+  }, []);
 
-  /** Actualiza un campo escalar en cualquier parte del doc (nivel crate, no reward) */
-  const updateCrateField = useCallback((path, value) => {
-    if (!doc) return;
-    pushHistory();
-    setField(doc, path, value);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
+  /** SpecializedCrates (.crate/.yml) -> crate de ExcellentCrates. Ver specializedConverter.js. */
+  const convertSpecializedFile = useCallback((name, src) => {
+    try {
+      const parsed = parseSpecializedCrate(src);
+      setTargetTotal(parsed.suggestedTargetTotal || 1000);
+      open(name.replace(/\.(crate|ya?ml)$/i, '') + '.yml', buildExcellentCratesYaml(parsed), {
+        sourceName: name,
+        rewardCount: parsed.rewards.length,
+        items: parsed.warnings,
+      });
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }, [open]);
 
-  /** Actualiza una secuencia de strings a nivel crate (Positions, Ids, Description) */
-  const updateCrateStringSeq = useCallback((path, values) => {
-    if (!doc) return;
-    pushHistory();
-    setStringSeq(doc, path, values);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
+  const openServer = useCallback(async (files) => {
+    try {
+      const s = await readServerFolder(files);
+      setServer(s);
+      if (s.rarities) setRarityWeights(weightsOf(s.rarities));
+      setError(null);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }, [setRarityWeights]);
 
-  const createReward = useCallback((key, data) => {
-    if (!doc) return;
-    pushHistory();
-    addReward(doc, key, data);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
+  const switchCrate = useCallback((name) => {
+    if (!server) return;
+    // guarda lo editado de la crate actual para no perderlo al volver a ella
+    const crates = fileName && text != null ? { ...server.crates, [fileName]: text } : server.crates;
+    setServer({ ...server, crates });
+    open(name, crates[name]);
+  }, [server, fileName, text, open]);
 
-  const removeReward = useCallback((key) => {
-    if (!doc) return;
-    pushHistory();
-    deleteReward(doc, key);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
+  const edit = useCallback((fn) => {
+    if (text == null) return;
+    let next;
+    try {
+      next = editCrateText(text, fn);
+      loadCrateFile(next); // si el resultado no parsea no se aplica: mejor un error que perder el archivo
+    } catch (e) {
+      setError(e.message || String(e));
+      return;
+    }
+    if (next === text) return;
+    setHistory((h) => [...h.slice(-49), text]);
+    setText(next);
+    setError(null);
+  }, [text]);
 
-  const renameRewardKey = useCallback((oldKey, newKey) => {
-    if (!doc) return;
-    pushHistory();
-    renameReward(doc, oldKey, newKey);
-    refreshModelFromDoc(doc);
-  }, [doc, pushHistory, refreshModelFromDoc]);
-
-  const exportYaml = useCallback(() => {
-    if (!doc) return '';
-    return serializeCrateFile(doc);
-  }, [doc]);
+  const undo = useCallback(() => {
+    if (history.length === 0) return;
+    setText(history[history.length - 1]);
+    setHistory(history.slice(0, -1));
+  }, [history]);
 
   const validation = useMemo(() => {
     if (!model) return null;
-    return validatePool(model.rewards, targetTotal);
-  }, [model, targetTotal]);
+    const pool = validatePool(model.rewards, targetTotal, rarityWeights);
+    const issues = [...pool.issues, ...inspectCrate(model, server, rarityWeights)];
+    return { ...pool, issues, healthy: issues.every((i) => i.level !== 'error') };
+  }, [model, targetTotal, rarityWeights, server]);
 
   const value = {
     fileName,
-    doc,
     model,
     error,
     targetTotal,
     setTargetTotal,
     validation,
     rarityWeights,
+    rarityNames: server?.rarities ? Object.fromEntries(Object.entries(server.rarities).map(([id, r]) => [id, r.name])) : null,
     setRarityWeight,
     resetRarityWeights,
+    server,
+    openServer,
+    switchCrate,
     canUndo: history.length > 0,
-    openFile,
-    newBlankFile,
+    undo,
+    openFile: open,
+    newBlankFile: () => open('nueva_caja.yml', BLANK_CRATE),
     convertSpecializedFile,
     conversionWarnings,
-    dismissConversionWarnings,
-    updateWeight,
-    updateField,
-    updateCrateField,
-    updateCrateStringSeq,
-    createReward,
-    removeReward,
-    renameRewardKey,
-    exportYaml,
-    undo,
+    dismissConversionWarnings: () => setConversionWarnings(null),
+    updateWeight: (key, weight) => edit((d) => setRewardWeight(d, key, weight)),
+    /** field puede ser 'Name' o ['Win_Limit', 'Player', 'Enabled'] */
+    updateField: (key, field, v) => edit((d) => setRewardField(d, key, field, v)),
+    setRewardNode: (key, field, obj) => edit((d) => setNode(d, ['Rewards', 'List', key, field], obj)),
+    updateCrateField: (path, v) => edit((d) => setField(d, path, v)),
+    updateCrateStringSeq: (path, values) => edit((d) => setStringSeq(d, path, values)),
+    deleteCrateField: (path) => edit((d) => deleteField(d, path)),
+    addMilestone: (rewardId, openings) => edit((d) => addMilestone(d, rewardId, openings)),
+    createReward: (key, data) => edit((d) => addReward(d, key, data)),
+    removeReward: (key) => edit((d) => deleteReward(d, key)),
+    renameRewardKey: (oldKey, newKey) => edit((d) => renameReward(d, oldKey, newKey)),
+    exportYaml: () => text ?? '',
   };
 
   return <CrateContext.Provider value={value}>{children}</CrateContext.Provider>;

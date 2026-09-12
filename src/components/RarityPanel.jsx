@@ -1,32 +1,29 @@
 import React, { useState } from 'react';
 import { Layers, Info, RotateCcw, Plus } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
-import { DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
+import { rarityOf } from '../lib/weightMath.js';
+import McText from './McText.jsx';
 
 /**
- * Rewards.Rarities.<id>.Weight vive en el config.yml GLOBAL del plugin
- * (compartido por TODAS las crates del server), no en el archivo de la
- * crate que estás editando. Por eso este panel es independiente del
- * archivo abierto: es "cómo está configurado tu server", no algo que se
- * exporte en el YAML de la crate. Afecta el % real solo si la crate mezcla
- * 2+ rarezas — con una sola, es irrelevante (colapsa a weight/total).
+ * Rewards.Rarities.<id>.Weight vive en el config.yml GLOBAL del plugin, no en
+ * el archivo de la crate: no se exporta. Con la carpeta del plugin abierta se
+ * cargan las reales; si no, se configuran a mano (quedan guardadas localmente).
+ * Solo importa si la crate mezcla 2+ rarezas.
  */
 export default function RarityPanel() {
-  const { model, rarityWeights, setRarityWeight, resetRarityWeights } = useCrate();
+  const { model, server, rarityWeights, rarityNames, setRarityWeight, resetRarityWeights } = useCrate();
   const [newId, setNewId] = useState('');
 
   if (!model) return null;
 
-  const usedRarities = [...new Set(model.rewards.map((r) => String(r.rarity || 'common').trim().toLowerCase() || 'common'))];
-  // Mostrar las rarezas en uso en esta crate primero, y después cualquier otra
-  // ya configurada (por si el admin tiene más rarezas definidas globalmente
-  // que usa en otras crates del server).
+  // rareza efectiva: una inexistente cae a la más común, igual que en el plugin
+  const usedRarities = [...new Set(model.rewards.map((r) => rarityOf(r, rarityWeights)))];
   const allIds = [...new Set([...usedRarities, ...Object.keys(rarityWeights)])];
 
   const addRarity = () => {
     const id = newId.trim().toLowerCase();
     if (!id || allIds.includes(id)) return;
-    setRarityWeight(id, DEFAULT_RARITY_WEIGHTS[id] ?? 10);
+    setRarityWeight(id, 10);
     setNewId('');
   };
 
@@ -42,35 +39,37 @@ export default function RarityPanel() {
           className="inline-flex items-center gap-1 text-xs text-ink-500 hover:text-parch-200 transition-colors"
         >
           <RotateCcw className="w-3 h-3" strokeWidth={1.5} />
-          Restaurar defaults
+          {server?.rarities ? 'Recargar del config' : 'Restaurar defaults'}
         </button>
       </div>
 
       <div className="flex items-start gap-2 bg-ink-800/60 border border-ink-700 rounded-lg px-3 py-2 mb-4 text-xs text-ink-500 leading-relaxed">
         <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-gold-400" strokeWidth={1.5} />
         <span>
-          Esto vive en <code className="text-parch-200">Rewards.Rarities</code> del{' '}
-          <code className="text-parch-200">config.yml</code> GLOBAL del plugin — es compartido por
-          todo el server, no se guarda en el archivo de esta crate. Solo importa si la crate mezcla
-          2+ rarezas distintas.
+          {server?.rarities ? (
+            <>Cargadas de <code className="text-parch-200">Rewards.Rarities</code> del config.yml de tu carpeta. Cambiarlas acá no modifica el server.</>
+          ) : (
+            <>Viven en <code className="text-parch-200">Rewards.Rarities</code> del config.yml GLOBAL, no en esta crate. Abrí la carpeta del plugin para usar las reales.</>
+          )}
         </span>
       </div>
 
       <div className="space-y-2">
         {allIds.map((id) => (
           <div key={id} className="flex items-center gap-3 bg-ink-800 rounded-lg px-3 py-2">
-            <span className="text-xs font-mono-tab text-parch-200 flex-1 flex items-center gap-2">
-              {id}
+            <span className="text-xs font-mono-tab text-parch-200 flex-1 flex items-center gap-2 min-w-0">
+              <span className="truncate">{id}</span>
+              {rarityNames?.[id] && <McText text={rarityNames[id]} className="text-[10px] truncate" />}
               {usedRarities.includes(id) && (
-                <span className="text-[9px] uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.5">
+                <span className="text-[9px] uppercase tracking-wider text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-0.5 shrink-0">
                   en uso
                 </span>
               )}
             </span>
             <input
               type="number"
-              step="1"
-              value={rarityWeights[id] ?? DEFAULT_RARITY_WEIGHTS[id] ?? 0}
+              step="any"
+              value={rarityWeights[id] ?? 0}
               onChange={(e) => setRarityWeight(id, e.target.value)}
               className="w-24 bg-ink-950 border border-ink-600 rounded-lg px-2 py-1.5 text-sm text-right font-mono-tab text-parch-100 outline-none focus:border-gold-500"
             />

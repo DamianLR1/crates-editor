@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Trash2, Plus, ChevronDown, ChevronRight } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
-import { computePercentages, formatPercent } from '../lib/weightMath.js';
+import { computePercentages, formatPercent, mostCommonRarity } from '../lib/weightMath.js';
 import WeightBar from './WeightBar.jsx';
 import McText from './McText.jsx';
 import RewardDetailPanel from './RewardDetailPanel.jsx';
@@ -18,14 +18,15 @@ export default function RewardsTable() {
 
   const filtered = withPercents.filter((r) =>
     r.key.toLowerCase().includes(filter.toLowerCase()) ||
-    (r.name || '').toLowerCase().includes(filter.toLowerCase())
+    r.displayName.toLowerCase().includes(filter.toLowerCase())
   );
 
   const handleNewReward = () => {
     let n = 1;
     while (model.rewards.some((r) => r.key === `nuevo_premio_${n}`)) n++;
     const key = `nuevo_premio_${n}`;
-    createReward(key, { type: 'COMMAND', weight: 10, name: '&eNuevo Premio', commands: [] });
+    // el wizard del plugin usa la rareza más común (CrateManager.getMostCommonRarity)
+    createReward(key, { weight: 10, name: '&eNuevo Premio', rarity: mostCommonRarity(rarityWeights) });
     setExpandedKey(key);
   };
 
@@ -33,7 +34,7 @@ export default function RewardsTable() {
   // Devuelve true/false para que RewardDetailPanel sepa si el cambio se aplicó
   // (rechazamos duplicados y keys vacías antes de tocar el doc).
   const handleRename = (oldKey, newKey) => {
-    const clean = newKey.trim();
+    const clean = newKey.trim().toLowerCase();
     if (!clean || clean === oldKey) return false;
     if (model.rewards.some((r) => r.key === clean)) return false;
     renameRewardKey(oldKey, clean);
@@ -109,8 +110,11 @@ function RewardRow({ reward, maxPercent, targetTotal, expanded, onToggle, onWeig
 
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <McText text={reward.name} className="text-sm truncate" />
+            <McText text={reward.displayName} className="text-sm truncate" />
             <span className="text-[10px] text-ink-500 font-mono-tab shrink-0">{reward.key}</span>
+            {reward.type === 'ITEM' && (
+              <span className="text-[9px] uppercase tracking-wider text-ink-500 border border-ink-600 rounded px-1 shrink-0">ítem</span>
+            )}
           </div>
           <div className="mt-1.5 max-w-xs">
             <WeightBar percent={reward.percent} rarity={reward.rarity} maxPercent={maxPercent} />

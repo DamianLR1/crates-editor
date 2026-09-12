@@ -3,7 +3,7 @@ import { Box, Undo2, Download, FileCode2, Eye, Table2 } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
 
 export default function TopBar({ view, setView }) {
-  const { fileName, exportYaml, undo, canUndo } = useCrate();
+  const { fileName, exportYaml, undo, canUndo, server, switchCrate } = useCrate();
   const [showSource, setShowSource] = useState(false);
 
   const handleDownload = () => {
@@ -28,7 +28,20 @@ export default function TopBar({ view, setView }) {
 
           <div className="h-5 w-px bg-ink-700 shrink-0" />
 
-          <span className="text-xs text-ink-500 font-mono-tab truncate">{fileName}</span>
+          {server ? (
+            <select
+              value={fileName}
+              onChange={(e) => switchCrate(e.target.value)}
+              title="Cambiar de crate (lo editado se conserva mientras no recargues la página)"
+              className="bg-ink-900 border border-ink-700 rounded-lg px-2 py-1 text-xs text-parch-200 font-mono-tab outline-none focus:border-gold-500 max-w-48"
+            >
+              {[...new Set([fileName, ...Object.keys(server.crates)])].sort().map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="text-xs text-ink-500 font-mono-tab truncate">{fileName}</span>
+          )}
 
           <nav className="ml-4 flex items-center gap-1 bg-ink-900 rounded-lg p-0.5">
             <ViewTab icon={Table2} label="Editor" active={view === 'editor'} onClick={() => setView('editor')} />

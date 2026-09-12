@@ -1,9 +1,9 @@
 import React, { useCallback, useState } from 'react';
-import { UploadCloud, FilePlus2, Box, ArrowRightLeft } from 'lucide-react';
+import { UploadCloud, FilePlus2, Box, ArrowRightLeft, FolderOpen } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
 
 export default function WelcomeScreen() {
-  const { openFile, newBlankFile, convertSpecializedFile, error } = useCrate();
+  const { openFile, newBlankFile, convertSpecializedFile, openServer, server, switchCrate, error } = useCrate();
   const [dragOver, setDragOver] = useState(false);
 
   const handleFiles = useCallback((files) => {
@@ -67,13 +67,49 @@ export default function WelcomeScreen() {
         </div>
       )}
 
+      {server && (
+        <div className="mt-6 w-full max-w-xl">
+          <p className="text-xs text-ink-500 mb-2">{Object.keys(server.crates).length} crates en la carpeta — elegí una:</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {Object.keys(server.crates).sort().map((name) => (
+              <button
+                key={name}
+                onClick={() => switchCrate(name)}
+                className="text-left text-xs font-mono-tab bg-ink-900 hover:bg-ink-800 border border-ink-700 rounded-lg px-3 py-2 text-parch-200 truncate transition-colors"
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="mt-6 flex items-center gap-3">
         <div className="h-px w-16 bg-ink-700" />
         <span className="text-ink-500 text-xs uppercase tracking-wider">o</span>
         <div className="h-px w-16 bg-ink-700" />
       </div>
 
-      <div className="mt-6 flex flex-col sm:flex-row items-center gap-4">
+      <div className="mt-6 flex flex-col sm:flex-row flex-wrap justify-center items-center gap-4">
+        <button
+          onClick={() => document.getElementById('folder-input').click()}
+          className="inline-flex items-center gap-2 text-sm text-parch-200 hover:text-gold-400 transition-colors"
+          title="Carga todas las crates, las rarezas del config.yml y valida llaves/previews/animaciones"
+        >
+          <FolderOpen className="w-4 h-4" strokeWidth={1.5} />
+          Abrir carpeta del plugin
+        </button>
+        <input
+          id="folder-input"
+          type="file"
+          webkitdirectory=""
+          multiple
+          className="hidden"
+          onChange={(e) => openServer(e.target.files)}
+        />
+
+        <span className="text-ink-600 hidden sm:inline">·</span>
+
         <button
           onClick={newBlankFile}
           className="inline-flex items-center gap-2 text-sm text-parch-200 hover:text-gold-400 transition-colors"

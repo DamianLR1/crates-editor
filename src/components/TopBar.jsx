@@ -1,114 +1,53 @@
 import React, { useState } from 'react';
-import { Box, Undo2, Download, FileCode2, Eye, Table2 } from 'lucide-react';
+import { Undo2, Download, FileCode2, Copy, X } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
+import McText from './McText.jsx';
+import { Button, VersionBadge, downloadText } from './fields.jsx';
 
-export default function TopBar({ view, setView }) {
-  const { fileName, exportYaml, undo, canUndo, server, switchCrate } = useCrate();
+export default function TopBar() {
+  const { model, fileName, exportYaml, undo, canUndo } = useCrate();
   const [showSource, setShowSource] = useState(false);
-
-  const handleDownload = () => {
-    const text = exportYaml();
-    const blob = new Blob([text], { type: 'text/yaml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName || 'crate.yml';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   return (
     <>
-      <div className="border-b border-ink-700 bg-ink-950/80 backdrop-blur sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center gap-4">
-          <div className="flex items-center gap-2 shrink-0">
-            <Box className="w-5 h-5 text-gold-400" strokeWidth={1.5} />
-            <span className="font-semibold text-parch-100 text-sm">CrateForge</span>
-          </div>
-
-          <div className="h-5 w-px bg-ink-700 shrink-0" />
-
-          {server ? (
-            <select
-              value={fileName}
-              onChange={(e) => switchCrate(e.target.value)}
-              title="Cambiar de crate (lo editado se conserva mientras no recargues la página)"
-              className="bg-ink-900 border border-ink-700 rounded-lg px-2 py-1 text-xs text-parch-200 font-mono-tab outline-none focus:border-gold-500 max-w-48"
-            >
-              {[...new Set([fileName, ...Object.keys(server.crates)])].sort().map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          ) : (
-            <span className="text-xs text-ink-500 font-mono-tab truncate">{fileName}</span>
-          )}
-
-          <nav className="ml-4 flex items-center gap-1 bg-ink-900 rounded-lg p-0.5">
-            <ViewTab icon={Table2} label="Editor" active={view === 'editor'} onClick={() => setView('editor')} />
-            <ViewTab icon={Eye} label="Simulador" active={view === 'sim'} onClick={() => setView('sim')} />
-          </nav>
-
-          <div className="ml-auto flex items-center gap-2 shrink-0">
-            <button
-              onClick={undo}
-              disabled={!canUndo}
-              className="inline-flex items-center gap-1.5 text-xs text-ink-500 hover:text-parch-200 disabled:opacity-30 disabled:hover:text-ink-500 transition-colors px-2 py-1.5"
-              title="Deshacer último cambio"
-            >
-              <Undo2 className="w-3.5 h-3.5" strokeWidth={1.5} />
-            </button>
-            <button
-              onClick={() => setShowSource(true)}
-              className="inline-flex items-center gap-1.5 text-xs text-ink-500 hover:text-parch-200 transition-colors px-2.5 py-1.5"
-            >
-              <FileCode2 className="w-3.5 h-3.5" strokeWidth={1.5} />
-              Ver YAML
-            </button>
-            <button
-              onClick={handleDownload}
-              className="inline-flex items-center gap-1.5 bg-gold-500/15 hover:bg-gold-500/25 border border-gold-500/40 text-gold-400 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" strokeWidth={2} />
-              Exportar
-            </button>
+      <header className="sticky top-0 z-10 flex items-center gap-4 px-6 py-3 border-b border-ink-700 bg-ink-950/85 backdrop-blur">
+        <div className="min-w-0 flex-1">
+          <McText text={model.name || fileName} className="block truncate text-base font-semibold" />
+          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-ink-500 font-mono-tab">
+            <span className="truncate">{fileName}</span>
+            <VersionBadge format={model.format} />
           </div>
         </div>
-      </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="ghost" icon={Undo2} onClick={undo} disabled={!canUndo} title="Deshacer último cambio" />
+          <Button icon={FileCode2} onClick={() => setShowSource(true)}>Ver YAML</Button>
+          <Button variant="primary" icon={Download} onClick={() => downloadText(fileName || 'crate.yml', exportYaml())}>
+            Exportar
+          </Button>
+        </div>
+      </header>
 
       {showSource && <SourceModal onClose={() => setShowSource(false)} />}
     </>
   );
 }
 
-function ViewTab({ icon: Icon, label, active, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors
-        ${active ? 'bg-ink-700 text-parch-100' : 'text-ink-500 hover:text-parch-200'}`}
-    >
-      <Icon className="w-3.5 h-3.5" strokeWidth={1.5} />
-      {label}
-    </button>
-  );
-}
-
 function SourceModal({ onClose }) {
-  const { exportYaml } = useCrate();
+  const { exportYaml, fileName } = useCrate();
   const text = exportYaml();
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-6"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-ink-900 border border-ink-700 rounded-xl max-w-3xl w-full max-h-[80vh] flex flex-col overflow-hidden"
+        className="flex w-full max-w-4xl max-h-[85vh] flex-col overflow-hidden rounded-xl border border-ink-700 bg-ink-900"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-3 border-b border-ink-700">
-          <h3 className="text-sm font-medium text-parch-200">YAML resultante</h3>
-          <button onClick={onClose} className="text-ink-500 hover:text-parch-200 text-xs">Cerrar</button>
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-ink-700">
+          <h3 className="text-sm font-medium text-parch-200 truncate">{fileName}</h3>
+          <div className="flex items-center gap-2">
+            <Button icon={Copy} onClick={() => navigator.clipboard?.writeText(text)}>Copiar</Button>
+            <Button variant="ghost" icon={X} onClick={onClose}>Cerrar</Button>
+          </div>
         </div>
         <pre className="overflow-auto p-5 text-xs font-mono text-parch-200 leading-relaxed">{text}</pre>
       </div>

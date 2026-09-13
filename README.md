@@ -1,29 +1,46 @@
-# CrateForge
+# Editor-ExcellentCrates
 
-Editor visual para archivos de crate de **ExcellentCrates** (plugin de Minecraft/Paper). Corre 100% en el navegador — sin backend, sin subir tus YAML a ningún servidor.
+Editor visual para crates de **ExcellentCrates** (plugin de Minecraft/Paper), para las versiones **6.3.3** y **6.6.1**, con conversor de 6.3.3 a 6.6.1. Corre 100% en el navegador: sin backend y sin subir tus YAML a ningún servidor.
 
 ## Qué hace
 
-- **Edición quirúrgica del YAML**: al exportar, solo cambian las líneas de lo que editaste. El resto del archivo sale byte a byte igual, incluidas las líneas largas que SnakeYAML (el guardado del plugin) parte en varias.
-- **Abrir la carpeta del plugin** (`plugins/ExcellentCrates`): lista todas las crates, carga las rarezas reales de `config.yml` y avisa de referencias rotas (llaves que no existen en `keys/`, previews, animaciones, templates de holograma, metas que apuntan a rewards inexistentes).
-- **% real de cada reward** con el sorteo de dos niveles del plugin (rareza por su Weight global, después reward dentro de su rareza).
-- **Panel de salud del pool**: total vs objetivo, residuos decimales, pesos en 0, keys duplicadas, rarezas inexistentes, rewards que no entregan nada.
-- **Simulador de aperturas (Monte Carlo)** con el mismo sorteo.
-- **Editor completo de rewards**: nombre, lore, comandos, rareza, broadcast, PlaceholderAPI, PreviewData (vanilla/custom), permisos, Win_Limit (con CooldownStep). Rewards tipo ITEM muestran sus ítems (el NBT se sigue editando in-game).
-- **Editor de la crate**: llaves, preview, animación, cooldown, costo de apertura (`Opening.Cost`), permiso, bloque/holograma/efecto de partículas y metas (`Milestones.List`).
-- **Preview con formato Minecraft**: `&` codes, hex (`&#RRGGBB`) y un subconjunto de MiniMessage.
+- **Panel** con navegación lateral: Recompensas, Configuración, Simulador y Convertir. Con la carpeta del plugin abierta, la barra lateral lista todas las crates con su versión.
+- **Recompensas**: tabla con búsqueda, filtro por rareza, orden por probabilidad y paginación. Cada reward se edita en el lugar: nombre, lore, comandos, rareza, preview (vanilla o custom), permisos y límites (`Win_Limit` en 6.3.3, `Limits` en 6.6.1).
+- **Probabilidad real** de cada reward con el sorteo de dos niveles del plugin: primero la rareza por su Weight global, después el reward dentro de su rareza. Incluye un simulador Monte Carlo con el mismo sorteo.
+- **Configuración de la crate**: preview, animación, llaves y costos (`Key` + `Opening.Cost` en 6.3.3, `CostOptions` en 6.6.1), cooldown y límite de aperturas, comandos al abrir (`Post-Open`), bloque, holograma, efecto y metas.
+- **Edición quirúrgica**: al exportar sólo cambian las líneas que editaste. El resto del archivo sale byte a byte igual, incluidas las líneas largas que SnakeYAML (el guardado del plugin) parte en varias.
+- **Validación contra tu server**: con la carpeta `plugins/ExcellentCrates` abierta usa las rarezas reales de `config.yml` y avisa de llaves, previews, animaciones o templates que no existen, metas rotas, rewards que no entregan nada y costos inválidos.
 
-## Formato
+## Conversor 6.3.3 → 6.6.1
 
-Verificado contra el source del fork **6.3.3** que corre el server (`Crate.java`, `AbstractReward.java`, `CommandReward.java`, `ItemReward.java`, `LimitValues.java`, `RewardFactory.java`). Detalles que respeta:
+| Qué | 6.3.3 | 6.6.1 |
+|---|---|---|
+| Ítems (ItemProvider, PreviewData, ItemsData, ItemData) | `Type` + `Tag` / `Handler` + `ItemId` | `Provider` + `Data` |
+| Llaves | `Key.Required` + `Key.Ids` | `CostOptions` con entradas `key` |
+| Costo en moneda | `Opening.Cost` | entradas `currency` dentro de cada opción |
+| Cooldown de apertura | `Opening.Cooldown` | `OpeningCooldown` + `OpeningLimits` |
+| Límites de premios | `Win_Limit.Player` / `Global` | `Limits` (un `Enabled`, modo `DAILY`/`CUSTOM`) |
+| Placeholders | `Placeholder_Apply` en todos | sólo rewards ITEM; los comandos siempre usan PlaceholderAPI |
+| Nuevo | — | `Block.Effect.Enabled`, `Post-Open.Commands` |
 
-- Rewards nuevos con el mismo orden de claves y valores por defecto que el plugin (`Weight: 10.0`, `Win_Limit` con `CooldownStep`, PreviewData de command_block).
-- IDs de reward, llaves, preview, animación y template en minúsculas (el plugin los pasa a minúsculas).
-- Una rareza que no existe en `config.yml` cae a la más común (la de mayor Weight); peso 0 no se sortea.
-- Con PreviewData `CUSTOM`, un reward COMMAND usa el nombre/lore del ítem y el plugin borra `Name`/`Description` al guardar.
-- Se lee y escribe como YAML 1.1 (igual que SnakeYAML).
+6.6.1 migra los archivos viejos solo al cargarlos, pero esa migración tiene tres bugs que el conversor evita:
 
-Los archivos con claves de versiones más nuevas del plugin (`ItemProvider.Provider/Data`, `Limits`, `CostOptions`) se conservan tal cual, pero el fork 6.3.3 las ignora.
+- **Pierde el cooldown de apertura**: guarda `OpeningCooldown.Value: 0`.
+- **Deja cajas abiertas de más**: crea opciones de costo con `Enabled` igual a `Key.Required` y separa la moneda de la llave, así que se puede abrir pagando sólo plata, o gratis. En 6.3.3 había que tener la llave **y** pagar, y así lo deja el conversor.
+- **Saca el cooldown de medianoche**: `Win_Limit` con cooldown `-2` pasa a `DAILY` con valor 0, que en 6.6.1 significa "sin cooldown".
+
+Todo lo que cambia de comportamiento aparece como aviso. Hay dos formas de usarlo:
+
+- **Desde la web**, en la sección *Convertir a 6.6.1*: la crate abierta o la carpeta completa. En Chrome/Edge se guarda directo en una carpeta.
+- **Por consola**:
+
+  ```bash
+  npm run convert -- "ruta/ExcellentCrates 6.3.3" "ruta/ExcellentCrates-6.6.1"
+  ```
+
+Copiá después `crates/` y `keys/` al server con el plugin apagado.
+
+Formato verificado contra el source del fork 6.3.3 y el de 6.6.1 que usa el server (`Crate`, `AbstractReward`, `CommandReward`, `ItemReward`, `LimitValues`, `Cost`, `ItemHelper` y los adaptadores de ítems de nightcore).
 
 ## Correrlo localmente
 
@@ -35,45 +52,33 @@ npm run dev
 ## Check
 
 ```bash
-npm run check                                            # fixture interno
-npm run check -- ruta/a/plugins/ExcellentCrates/crates   # además, todas tus crates reales
+npm run check                                              # fixtures internos
+npm run check -- "ruta/ExcellentCrates 6.3.3/crates" ...    # además, crates reales
 ```
 
-Verifica round-trip exacto, que editar un peso cambie una sola línea, el formato de rewards nuevos y el cálculo de %.
-
-## Build de producción
-
-```bash
-npm run build
-npm run preview   # sirve el build en local para probarlo
-```
+Verifica round-trip exacto, que editar un peso cambie una sola línea, el formato de rewards nuevos en cada versión, el conversor (estructura, idempotencia, que no queden claves viejas) y el cálculo de probabilidades.
 
 ## Deploy
 
-- **Firebase Hosting** (`firebase.json` sirve `dist/`): `npm run build` y `firebase deploy`.
-- **GitHub Pages**: el workflow `.github/workflows/deploy.yml` buildea y publica en cada push a `main` (Settings → Pages → Source: GitHub Actions).
+GitHub Pages: el workflow `.github/workflows/deploy.yml` buildea y publica en cada push a `main` (Settings → Pages → Source: GitHub Actions). `dist/` no se commitea.
 
-## Estructura del proyecto
+## Estructura
 
 ```
 src/
   lib/
-    crateFile.js         -> modelo + edición quirúrgica del YAML
-    crateFile.check.mjs  -> check (npm run check)
-    weightMath.js        -> pesos, %, residuos, simulación
-    serverContext.js     -> lectura de la carpeta del plugin + validaciones
+    crateFile.js          -> modelo de las dos versiones + edición quirúrgica del YAML
+    convert661.js         -> conversor 6.3.3 -> 6.6.1
+    crateFile.check.mjs   -> check (npm run check)
+    weightMath.js         -> pesos, probabilidades, residuos, simulación
+    serverContext.js      -> lectura de la carpeta del plugin + validaciones
     specializedConverter.js -> SpecializedCrates -> ExcellentCrates
-    mcText.js            -> texto estilo Minecraft (& codes, MiniMessage)
-  store/
-    CrateStore.jsx       -> estado global (el texto YAML es la fuente de verdad)
-  components/            -> UI (fields.jsx: inputs compartidos)
+    mcText.js             -> texto estilo Minecraft (& codes, MiniMessage)
+  store/CrateStore.jsx    -> estado global (el texto YAML es la fuente de verdad)
+  components/             -> UI (fields.jsx: inputs y piezas compartidas)
+scripts/convert.mjs       -> conversor por consola
 ```
-
-## Pendiente
-
-- Editar el NBT de ItemsData / ItemProvider (hoy se conserva tal cual; se edita in-game).
-- Editar llaves (`keys/*.yml`) y guardar varias crates de una vez (hoy se exporta la crate abierta).
 
 ## Licencia
 
-Uso libre para tu propio servidor. ExcellentCrates es marca de sus autores; este proyecto no esta afiliado a nulli0n/NightExpress.
+Uso libre para tu propio servidor. ExcellentCrates es marca de sus autores; este proyecto no está afiliado a nulli0n/NightExpress.

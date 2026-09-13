@@ -1,29 +1,37 @@
 // serverContext.js
 // La carpeta plugins/ExcellentCrates abierta con <input webkitdirectory>.
 // Aporta las rarezas reales del config.yml (sin ellas el % de una crate con
-// varias rarezas sale mal) y los ids que existen de verdad, para avisar de
-// referencias rotas antes de subir el archivo al server.
+// varias rarezas sale mal), los ids que existen de verdad para avisar de
+// referencias rotas, y las crates/llaves para convertir la carpeta entera.
 
 import { parseDocument } from 'yaml';
 import { mostCommonRarity } from './weightMath.js';
+import { crateFormat, V633 } from './crateFile.js';
 
 export async function readServerFolder(fileList) {
   // webkitRelativePath = "<carpeta elegida>/crates/gold.yml" -> "crates/gold.yml"
   const files = [...fileList].map((file) => ({ file, path: file.webkitRelativePath.split('/').slice(1).join('/') }));
   const idsIn = (re) => [...new Set(files.map(({ path }) => path.match(re)?.[1].toLowerCase()).filter(Boolean))].sort();
+  const readAll = async (re) => {
+    const out = {};
+    for (const { file, path } of files) {
+      const name = path.match(re)?.[1];
+      if (name) out[name] = await file.text();
+    }
+    return out;
+  };
 
-  const crates = {};
-  for (const { file, path } of files) {
-    const name = path.match(/^crates\/([^/]+\.ya?ml)$/i)?.[1];
-    if (name) crates[name] = await file.text();
-  }
+  const crates = await readAll(/^crates\/([^/]+\.ya?ml)$/i);
   if (Object.keys(crates).length === 0) {
     throw new Error('No encontré crates/*.yml. Elegí la carpeta plugins/ExcellentCrates completa.');
   }
+  const keys = await readAll(/^keys\/([^/]+\.ya?ml)$/i);
 
   const server = {
     crates,
-    keyIds: idsIn(/^keys\/([^/]+)\.ya?ml$/i),
+    keys,
+    formats: Object.fromEntries(Object.entries(crates).map(([name, text]) => [name, safeFormat(text)])),
+    keyIds: Object.keys(keys).map((name) => name.replace(/\.ya?ml$/i, '').toLowerCase()).sort(),
     previewIds: idsIn(/^previews\/([^/]+)\.ya?ml$/i),
     animationIds: idsIn(/^openings\/[^/]+\/([^/]+)\.ya?ml$/i),
     hologramIds: [],
@@ -43,6 +51,14 @@ export async function readServerFolder(fileList) {
     }
   }
   return server;
+}
+
+function safeFormat(text) {
+  try {
+    return crateFormat(text);
+  } catch {
+    return null;
+  }
 }
 
 /** Problemas que el plugin no avisa al editar el YAML a mano. */
@@ -67,11 +83,23 @@ export function inspectCrate(model, server, rarityWeights) {
       warn(`La meta de ${m.openings} aperturas apunta a un reward que no existe ("${m.rewardId}").`);
     }
   }
-  if (model.key.required && model.key.ids.length === 0) warn('Llave requerida pero no hay IDs de llave.');
+
+  if (model.format === V633) {
+    if (model.key.required && model.key.ids.length === 0) warn('Llave requerida pero no hay IDs de llave.');
+  } else {
+    if (!model.costOptions.some((o) => o.enabled && o.entries.length)) warn('Sin opciones de costo activas: la caja se abre gratis.');
+    for (const o of model.costOptions) {
+      for (const e of o.entries) {
+        if (e.type !== 'key' && e.type !== 'currency') warn(`Costo "${o.id}": tipo "${e.type}" desconocido.`);
+        else if (e.amount <= 0) warn(`Costo "${o.id}": el monto ${e.amount} no es válido (el plugin lo ignora).`);
+        else if (e.type === 'key' ? !e.key : !e.currency) warn(`Costo "${o.id}": entrada sin ${e.type === 'key' ? 'llave' : 'moneda'}.`);
+      }
+    }
+  }
 
   if (server) {
     const missing = (ids, id) => ids.length > 0 && !ids.includes(String(id ?? '').toLowerCase());
-    for (const id of model.key.ids) if (missing(server.keyIds, id)) warn(`La llave "${id}" no existe en keys/.`);
+    for (const id of model.keyIds) if (id && missing(server.keyIds, id)) warn(`La llave "${id}" no existe en keys/.`);
     if (model.preview.enabled && missing(server.previewIds, model.preview.id)) {
       warn(`El preview "${model.preview.id}" no existe en previews/.`);
     }

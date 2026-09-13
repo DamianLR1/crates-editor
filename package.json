@@ -1,5 +1,5 @@
 {
-  "name": "ec-editor",
+  "name": "editor-excellentcrates",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "oxlint",
     "check": "node src/lib/crateFile.check.mjs",
+    "convert": "node scripts/convert.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

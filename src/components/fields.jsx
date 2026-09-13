@@ -1,24 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { useCrate } from '../store/CrateStore.jsx';
+import { V661 } from '../lib/crateFile.js';
 import McText from './McText.jsx';
 
 export const inputCls =
   'w-full bg-ink-800 border border-ink-600 rounded-lg px-3 py-2 text-xs text-parch-100 outline-none focus:border-gold-500';
 
-// Ids reales del fork 6.3.3 (EffectId.java, OpeningManager.loadDefaults).
+// Ids reales del plugin (EffectId.java, OpeningManager.loadDefaults, adaptadores de nightcore).
 export const EFFECTS = ['none', 'simple', 'helix', 'spiral', 'sphere', 'heart', 'pulsar', 'beacon', 'tornado', 'vortex'];
 const DEFAULT_ANIMATIONS = ['csgo', 'enclosing', 'mystery', 'roulette', 'storm', 'simple_roll', 'selective_1', 'selective_3'];
-const HANDLERS = ['MMOItems', 'Nexo', 'Oraxen', 'ItemsAdder', 'HeadDatabase'];
+const HANDLERS_633 = ['MMOItems', 'Nexo', 'Oraxen', 'ItemsAdder', 'HeadDatabase'];
+const HANDLERS_661 = ['mmoitems', 'nexo', 'itemsadder', 'oraxen', 'executableitems', 'craftengine'];
 const CURRENCIES = ['vault', 'playerpoints', 'xp_level', 'xp_points'];
 
 /** Sugerencias para los <input list="dl-..."> (con carpeta abierta: los ids reales del server). */
 export function Datalists() {
-  const { server } = useCrate();
+  const { server, model } = useCrate();
   const lists = {
+    'dl-keys': server?.keyIds ?? [],
     'dl-previews': server?.previewIds ?? ['default'],
     'dl-animations': server?.animationIds ?? DEFAULT_ANIMATIONS,
     'dl-holograms': server?.hologramIds ?? ['default'],
-    'dl-handlers': HANDLERS,
+    'dl-handlers': model?.format === V661 ? HANDLERS_661 : HANDLERS_633,
     'dl-currencies': CURRENCIES,
   };
   return Object.entries(lists).map(([id, values]) => (
@@ -26,6 +29,15 @@ export function Datalists() {
       {values.map((v) => <option key={v} value={v} />)}
     </datalist>
   ));
+}
+
+export function downloadText(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/yaml' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Borrador local que se resetea cuando cambia el valor de afuera (undo, otra crate).
@@ -36,6 +48,55 @@ function useDraft(value) {
 }
 
 const blurOnEnter = (e) => e.key === 'Enter' && e.currentTarget.blur();
+
+export function VersionBadge({ format }) {
+  const modern = format === V661;
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-mono-tab border shrink-0 ${
+        modern ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10' : 'text-gold-400 border-gold-500/30 bg-gold-500/10'
+      }`}
+    >
+      {format}
+    </span>
+  );
+}
+
+const BUTTON_STYLES = {
+  default: 'bg-ink-800 hover:bg-ink-700 border-ink-600 text-parch-200',
+  primary: 'bg-gold-500/15 hover:bg-gold-500/25 border-gold-500/40 text-gold-400',
+  success: 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-400',
+  ghost: 'border-transparent text-ink-500 hover:text-parch-200',
+};
+
+export function Button({ children, icon: Icon, variant = 'default', className = '', ...props }) {
+  return (
+    <button
+      {...props}
+      className={`inline-flex items-center gap-1.5 border text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-40 disabled:pointer-events-none ${BUTTON_STYLES[variant]} ${className}`}
+    >
+      {Icon && <Icon className="w-3.5 h-3.5" strokeWidth={1.75} />}
+      {children}
+    </button>
+  );
+}
+
+export function Card({ title, icon: Icon, actions, children, className = '', bodyClassName = 'p-5' }) {
+  return (
+    <section className={`bg-ink-900 border border-ink-700 rounded-xl ${className}`}>
+      {title && (
+        <header className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 border-b border-ink-700">
+          <h3 className="text-sm font-medium text-parch-200 flex items-center gap-2">
+            {Icon && <Icon className="w-4 h-4 text-gold-400" strokeWidth={1.5} />}
+            {title}
+          </h3>
+          {actions}
+        </header>
+      )}
+      <div className={bodyClassName}>{children}</div>
+    </section>
+  );
+}
 
 export function Field({ label, hint, children }) {
   return (
@@ -71,7 +132,7 @@ export function Toggle({ label, checked, onChange }) {
   );
 }
 
-export function TextInput({ value, onCommit, list, lower = false, multiline = false, preview = false, className = '' }) {
+export function TextInput({ value, onCommit, list, lower = false, multiline = false, preview = false, placeholder, className = '' }) {
   const current = value == null ? '' : String(value);
   const [draft, setDraft] = useDraft(current);
   const commit = () => {
@@ -81,6 +142,7 @@ export function TextInput({ value, onCommit, list, lower = false, multiline = fa
   };
   const props = {
     value: draft,
+    placeholder,
     onChange: (e) => setDraft(e.target.value),
     onBlur: commit,
     className: `${inputCls} font-mono ${className}`,
@@ -142,7 +204,7 @@ export function LinesInput({ value, onCommit, rows = 3, lower = false, keepEmpty
       />
       {preview && lines.length > 0 && (
         <div className="mt-1.5 px-1 space-y-0.5">
-          {lines.map((line, i) => <McText key={i} text={line || ' '} className="text-xs block" />)}
+          {lines.map((line, i) => <McText key={i} text={line || ' '} className="text-xs block" />)}
         </div>
       )}
     </>

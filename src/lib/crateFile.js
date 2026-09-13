@@ -1,29 +1,37 @@
 // crateFile.js
-// Lectura y edición de crates de ExcellentCrates con el formato que escribe el
-// fork 6.3.3 del server (auditado contra Crate.java, AbstractReward.java,
-// CommandReward.java, ItemReward.java y LimitValues.java).
+// Lectura y edición de crates de ExcellentCrates en los dos formatos del
+// server: 6.3.3 (fork) y 6.6.1 (source del mod). El formato se detecta por
+// archivo (detectFormat) y cada edición escribe las claves de esa versión.
 //
 // Edición quirúrgica: cada cambio se aplica sobre un Document de `yaml` y
 // después patchText() reescribe SOLO los pares clave/valor que cambiaron; el
 // resto se copia byte a byte del texto original. Hace falta porque el plugin
 // guarda con SnakeYAML, que parte las líneas largas (NBT, nombres MiniMessage)
-// de una forma que la librería `yaml` no replica: reserializar el archivo
-// entero cambiaba cientos de líneas aunque los valores fueran idénticos.
+// de una forma que la librería `yaml` no replica.
 //
 // Se parsea como YAML 1.1 (lo que usa SnakeYAML) para que `yes`/`on`/`no` y
 // similares se lean igual que en el plugin y se escriban entre comillas.
 
 import { parseDocument, Document, YAMLMap, YAMLSeq, isMap, isNode, isPair, isScalar } from 'yaml';
 
+export const V633 = '6.3.3';
+export const V661 = '6.6.1';
+
 const PARSE_OPTIONS = { version: '1.1' };
-const STRINGIFY_OPTIONS = {
+export const STRINGIFY_OPTIONS = {
   lineWidth: 0, // sin wrap: una línea por valor
   indentSeq: false, // "- item" al nivel de la clave, como SnakeYAML
   singleQuote: true, // strings nuevos: plain si se puede, si no comillas simples
 };
 
-// DataVersion de 1.21.4, la que escribe el plugin del server en los Tag.
+// DataVersion de 1.21.4. Sirve también en servers más nuevos: Minecraft
+// actualiza el NBT viejo al cargarlo (al revés no).
 export const DATA_VERSION = 4189;
+const COMMAND_BLOCK = '{count:1,id:"minecraft:command_block"}';
+const TRIAL_KEY = '{count:1,id:"minecraft:trial_key"}';
+
+// Limits "sin límite" de 6.6.1 (LimitValues.unlimited)
+export const UNLIMITED_LIMITS = { Enabled: false, CooldownType: 'DAILY', GlobalAmount: -1, PlayerAmount: -1, GlobalCooldown: 0, PlayerCooldown: 0 };
 
 export class CrateParseError extends Error {
   constructor(yamlErrors) {
@@ -32,21 +40,25 @@ export class CrateParseError extends Error {
   }
 }
 
-function parse(text) {
+export function parseYaml(text) {
   const doc = parseDocument(text, PARSE_OPTIONS);
   if (doc.errors.length > 0) throw new CrateParseError(doc.errors);
   return doc;
 }
 
 export function loadCrateFile(text) {
-  const doc = parse(text);
+  const doc = parseYaml(text);
   return { doc, model: buildModel(doc), warnings: doc.warnings };
+}
+
+export function crateFormat(text) {
+  return detectFormat(parseYaml(text).contents);
 }
 
 /** Aplica `edit(doc)` y devuelve el texto nuevo, tocando solo lo que cambió. */
 export function editCrateText(text, edit) {
-  const original = parse(text);
-  const doc = parse(text);
+  const original = parseYaml(text);
+  const doc = parseYaml(text);
   edit(doc);
   forceBlockStyleDeep(doc.contents);
   return patchText(text, original, doc);
@@ -57,31 +69,67 @@ export function checkRoundTripFidelity(text) {
   return editCrateText(text, () => {}) === text;
 }
 
+// 6.3.3 guarda Key/Opening; 6.6.1 los migra a CostOptions/OpeningCooldown y siempre escribe Post-Open.
+function detectFormat(root) {
+  if (!isMap(root) || root.has('Key') || root.has('Opening')) return V633;
+  return ['OpeningCooldown', 'CostOptions', 'Post-Open'].some((k) => root.has(k)) ? V661 : V633;
+}
+
 // ---- Modelo plano para la UI (solo lectura) ----
 
 function buildModel(doc) {
   const root = doc.contents;
+  const format = detectFormat(root);
+  const costOptions = getPairs(root, ['CostOptions']).map(([id, node]) => ({
+    id: String(id),
+    enabled: getScalar(node, 'Enabled') ?? true, // Cost.read
+    name: getScalar(node, 'Name') ?? String(id),
+    entries: getPairs(node, ['Entries']).map(([index, entry]) => ({
+      index, // crudo ('0' o 0) para editar por path
+      type: String(getScalar(entry, 'Type') ?? '').toLowerCase(),
+      key: getScalar(entry, 'Key'),
+      currency: getScalar(entry, 'Currency'),
+      amount: Number(getScalar(entry, 'Amount')) || 0,
+    })),
+  }));
+  const key = { required: getScalar(root, ['Key', 'Required']), ids: getStrings(root, ['Key', 'Ids']) };
+  const effectModel = getScalar(root, ['Block', 'Effect', 'Model']) ?? 'none';
+
   return {
+    format,
     name: getScalar(root, 'Name'),
     description: getStrings(root, 'Description'),
-    itemProvider: buildItemModel(getNode(root, ['ItemProvider'])),
+    itemProvider: readItem(getNode(root, ['ItemProvider'])),
     itemStackable: getScalar(root, 'ItemStackable') ?? true, // default del plugin
     permissionRequired: getScalar(root, 'Permission_Required') ?? false,
     preview: { enabled: getScalar(root, ['Preview', 'Enabled']), id: getScalar(root, ['Preview', 'Id']) },
     animation: { enabled: getScalar(root, ['Animation', 'Enabled']), id: getScalar(root, ['Animation', 'Id']) },
+    // 6.3.3
+    key,
     opening: {
       cooldown: getScalar(root, ['Opening', 'Cooldown']) ?? 0,
-      // Opening.Cost.<moneda>: monto (EconomyBridge)
       costs: getPairs(root, ['Opening', 'Cost']).map(([id, v]) => ({ id: String(id), amount: Number(isScalar(v) ? v.value : v) || 0 })),
     },
-    key: { required: getScalar(root, ['Key', 'Required']), ids: getStrings(root, ['Key', 'Ids']) },
+    // 6.6.1
+    openingCooldown: {
+      enabled: getScalar(root, ['OpeningCooldown', 'Enabled']) ?? false,
+      value: getScalar(root, ['OpeningCooldown', 'Value']) ?? 0,
+    },
+    openingLimit: getScalar(root, ['OpeningLimits', 'Amount']) ?? 1,
+    costOptions,
+    postOpenCommands: getStrings(root, ['Post-Open', 'Commands']),
+    // llaves que abren la caja, en cualquiera de los dos formatos
+    keyIds: format === V661
+      ? [...new Set(costOptions.flatMap((o) => o.entries.filter((e) => e.type === 'key').map((e) => String(e.key ?? '').toLowerCase())))]
+      : key.ids,
     block: {
       positions: getStrings(root, ['Block', 'Positions']),
       pushbackEnabled: getScalar(root, ['Block', 'Pushback', 'Enabled']),
       hologramEnabled: getScalar(root, ['Block', 'Hologram', 'Enabled']),
       hologramTemplate: getScalar(root, ['Block', 'Hologram', 'Template']),
       hologramYOffset: getScalar(root, ['Block', 'Hologram', 'Y_Offset']) ?? 0,
-      effectModel: getScalar(root, ['Block', 'Effect', 'Model']) ?? 'none',
+      effectEnabled: getScalar(root, ['Block', 'Effect', 'Enabled']) ?? effectModel !== 'none', // default de 6.6.1
+      effectModel,
       effectParticleName: getScalar(root, ['Block', 'Effect', 'Particle', 'Name']),
     },
     milestones: {
@@ -100,12 +148,13 @@ function buildModel(doc) {
 
 function buildRewardsModel(root) {
   return getPairs(root, ['Rewards', 'List']).map(([rawKey, node]) => {
-    const limit = (side) => ({
+    const winLimit = (side) => ({
       enabled: getScalar(node, ['Win_Limit', side, 'Enabled']) ?? false,
       amount: getScalar(node, ['Win_Limit', side, 'Amount']) ?? -1,
       cooldown: getScalar(node, ['Win_Limit', side, 'Cooldown']) ?? 0,
       cooldownStep: getScalar(node, ['Win_Limit', side, 'CooldownStep']) ?? 1,
     });
+    const limit = (field, fallback) => getScalar(node, ['Limits', field]) ?? fallback;
     const commands = getStrings(node, 'Commands');
     const r = {
       key: String(rawKey),
@@ -121,9 +170,19 @@ function buildRewardsModel(root) {
       ignoredForPermissions: getStrings(node, 'Ignored_For_Permissions'),
       requiredPermissions: getStrings(node, 'Required_Permissions'),
       customPreview: getScalar(node, 'Custom_Preview') ?? false,
-      winLimit: { player: limit('Player'), global: limit('Global') },
-      previewData: buildItemModel(getNode(node, ['PreviewData'])),
-      itemsData: getPairs(node, ['ItemsData']).map(([index, item]) => ({ index: String(index), ...buildItemModel(item) })),
+      // 6.3.3
+      winLimit: { player: winLimit('Player'), global: winLimit('Global') },
+      // 6.6.1
+      limits: {
+        enabled: limit('Enabled', false),
+        cooldownType: String(limit('CooldownType', 'DAILY')).toUpperCase(),
+        globalAmount: limit('GlobalAmount', -1),
+        playerAmount: limit('PlayerAmount', -1),
+        globalCooldown: limit('GlobalCooldown', 0),
+        playerCooldown: limit('PlayerCooldown', 0),
+      },
+      previewData: readItem(getNode(node, ['PreviewData'])),
+      itemsData: getPairs(node, ['ItemsData']).map(([index, item]) => ({ index: String(index), ...readItem(item) })),
     };
     // ITEM muestra su primer ítem salvo Custom_Preview (ItemReward.getPreview)
     const shown = r.type === 'ITEM' && !r.customPreview ? r.itemsData[0] : r.previewData;
@@ -132,10 +191,24 @@ function buildRewardsModel(root) {
   });
 }
 
-function buildItemModel(node) {
+/**
+ * Ítem normalizado de cualquiera de los dos formatos:
+ *  6.3.3: Type: VANILLA + Tag {Value, DataVersion} | Type: CUSTOM + Handler/ItemId/Amount
+ *  6.6.1: Provider: vanilla + Data {Value, DataVersion} | Provider: <adaptador> + Data {ID, Amount}
+ * Si hay Type manda Type (así lo resuelve ItemHelper.read en 6.6.1).
+ */
+export function readItem(node) {
   if (!isMap(node)) return null;
+  const type = getScalar(node, 'Type');
+  const provider = getScalar(node, 'Provider');
+  if (type == null && provider != null) {
+    const adapter = String(provider).toLowerCase();
+    return adapter === 'vanilla'
+      ? { type: 'VANILLA', tagValue: getScalar(node, ['Data', 'Value']), tagDataVersion: getScalar(node, ['Data', 'DataVersion']) }
+      : { type: 'CUSTOM', handler: adapter, itemId: getScalar(node, ['Data', 'ID']), amount: getScalar(node, ['Data', 'Amount']) };
+  }
   return {
-    type: getScalar(node, 'Type') ?? 'VANILLA', // ItemTypes.read: sin Type = VANILLA
+    type: String(type ?? 'VANILLA').toUpperCase(), // ItemTypes.read: sin Type = VANILLA
     handler: getScalar(node, 'Handler'),
     itemId: getScalar(node, 'ItemId'),
     amount: getScalar(node, 'Amount'),
@@ -144,8 +217,35 @@ function buildItemModel(node) {
   };
 }
 
+/** Sección de ítem (PreviewData, ItemsData.N, ItemProvider, Icon) con las claves de cada versión. */
+export function itemNode(format, item = {}) {
+  const custom = item.type === 'CUSTOM';
+  const value = item.tagValue || COMMAND_BLOCK;
+  const dataVersion = item.tagDataVersion > 0 ? item.tagDataVersion : DATA_VERSION;
+  const amount = Math.max(1, Number(item.amount) || 1);
+  if (format === V661) {
+    // AdaptedItemStack.write: Provider (nombre del adaptador, minúsculas) + Data
+    return custom
+      ? { Provider: String(item.handler || 'mmoitems').toLowerCase(), Data: { ID: item.itemId ?? '', Amount: amount } }
+      : { Provider: 'vanilla', Data: { Value: value, DataVersion: dataVersion } };
+  }
+  return custom
+    ? { Type: 'CUSTOM', Handler: item.handler || 'MMOItems', ItemId: item.itemId ?? '', Amount: amount }
+    : { Type: 'VANILLA', Tag: { Value: value, DataVersion: dataVersion } };
+}
+
+/** Opción de costo de 6.6.1 (Cost.write). */
+export function costOption(name, entries, enabled = true) {
+  return {
+    Enabled: enabled,
+    Name: name,
+    Icon: itemNode(V661, { tagValue: TRIAL_KEY }),
+    Entries: Object.fromEntries(entries.map((entry, i) => [String(i), entry])),
+  };
+}
+
 /**
- * Nombre legible de un ítem (PreviewData / ItemsData / ItemProvider).
+ * Nombre legible de un ítem normalizado (ver readItem).
  * ponytail: saca MMOITEMS_NAME o el id del SNBT con regex, sin parser SNBT;
  * alcanza para mostrar, no para editar el NBT.
  */
@@ -189,9 +289,11 @@ const keyOf = (pair) => (isScalar(pair.key) ? pair.key.value : pair.key);
 
 const rewardPath = (key, ...rest) => ['Rewards', 'List', key, ...rest];
 
-// En vez de doc.setIn: con YAML 1.1 la librería crea los mapas intermedios
-// que faltan como `!!omap` (SnakeYAML no lo lee como sección normal).
-function setIn(doc, path, value) {
+/**
+ * En vez de doc.setIn: con YAML 1.1 la librería crea los mapas intermedios
+ * que faltan como `!!omap` (SnakeYAML no lo lee como sección normal).
+ */
+export function setIn(doc, path, value) {
   let node = doc.contents;
   for (const key of path.slice(0, -1)) {
     let next = node.get(key, true);
@@ -205,7 +307,7 @@ export function setRewardWeight(doc, key, weight) {
   setField(doc, rewardPath(key, 'Weight'), weight);
 }
 
-/** `field` puede ser 'Name' o un path ['Win_Limit', 'Player', 'Enabled']. */
+/** `field` puede ser 'Name' o un path ['Limits', 'Enabled']. */
 export function setRewardField(doc, key, field, value) {
   setField(doc, rewardPath(key, ...[field].flat()), value);
 }
@@ -224,12 +326,12 @@ export function setStringSeq(doc, path, values) {
   setIn(doc, path, seq);
 }
 
-/** Reemplaza un sub-árbol entero (ej. PreviewData al pasar de VANILLA a CUSTOM). */
+/** Reemplaza un sub-árbol entero (ej. PreviewData al pasar de vanilla a custom). */
 export function setNode(doc, path, obj) {
   setIn(doc, path, obj);
 }
 
-/** Borra un path; si el mapa padre queda vacío también lo borra (el plugin no deja `Cost: {}`). */
+/** Borra un path; si el mapa padre queda vacío también lo borra (el plugin no deja secciones vacías). */
 export function deleteField(doc, path) {
   doc.deleteIn(path);
   const parentPath = path.slice(0, -1);
@@ -237,8 +339,8 @@ export function deleteField(doc, path) {
   if (isMap(parent) && parent.items.length === 0) doc.deleteIn(parentPath);
 }
 
-export function addReward(doc, key, data) {
-  const node = doc.createNode(rewardToPlainObject(data));
+export function addReward(doc, key, data, format) {
+  const node = doc.createNode(rewardToPlainObject(data, format));
   node.get('Weight', true).minFractionDigits = 1; // el plugin guarda doubles: "10.0"
   setIn(doc, rewardPath(key), node);
 }
@@ -261,37 +363,32 @@ export function addMilestone(doc, rewardId, openings) {
   setIn(doc, ['Milestones', 'List', id], { Reward_Id: rewardId, Openings: openings });
 }
 
-/** PreviewData por defecto: el de CommandReward es un command_block vanilla. */
-export function defaultPreviewData(type) {
-  return type === 'CUSTOM'
-    ? { Type: 'CUSTOM', Handler: 'MMOItems', ItemId: '', Amount: 1 }
-    : { Type: 'VANILLA', Tag: { Value: '{count:1,id:"minecraft:command_block"}', DataVersion: DATA_VERSION } };
-}
-
-// Mismo orden de claves que AbstractReward.write + CommandReward.writeAdditional.
-function rewardToPlainObject(r) {
-  const limit = () => ({ Enabled: false, Amount: -1, Cooldown: 0, CooldownStep: 1 });
-  return {
+// Mismo orden de claves que AbstractReward.write + CommandReward.writeAdditional de cada versión.
+function rewardToPlainObject(r, format) {
+  const head = {
     Type: 'COMMAND',
-    PreviewData: defaultPreviewData('VANILLA'),
+    PreviewData: itemNode(format),
     Weight: r.weight ?? 10, // AbstractReward: setWeight(10D)
     Rarity: r.rarity || 'common',
     Broadcast: false,
-    Placeholder_Apply: false,
-    Win_Limit: { Player: limit(), Global: limit() },
+  };
+  const tail = {
     Ignored_For_Permissions: [],
     Required_Permissions: [],
     Name: r.name || '&eNuevo Premio',
     Description: r.description ?? [],
     Commands: r.commands ?? [],
   };
+  if (format === V661) return { ...head, Limits: UNLIMITED_LIMITS, ...tail };
+  const limit = () => ({ Enabled: false, Amount: -1, Cooldown: 0, CooldownStep: 1 });
+  return { ...head, Placeholder_Apply: false, Win_Limit: { Player: limit(), Global: limit() }, ...tail };
 }
 
 /**
  * Colecciones no vacías en estilo bloque (createNode/setIn a veces generan
- * flow: `Win_Limit: { Player: ... }`). Las vacías quedan flow: `Ids: []`.
+ * flow: `Limits: { Enabled: ... }`). Las vacías quedan flow: `Ids: []`.
  */
-function forceBlockStyleDeep(node) {
+export function forceBlockStyleDeep(node) {
   if (!(node instanceof YAMLMap || node instanceof YAMLSeq)) return;
   if (node.items.length > 0) node.flow = false;
   for (const item of node.items) forceBlockStyleDeep(isPair(item) ? item.value : item);

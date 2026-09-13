@@ -12,7 +12,9 @@ import {
   deleteReward,
   renameReward,
   addMilestone,
+  V661,
 } from '../lib/crateFile.js';
+import { convertCrate } from '../lib/convert661.js';
 import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
 import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
 import { readServerFolder, inspectCrate } from '../lib/serverContext.js';
@@ -34,8 +36,9 @@ function storeRarityWeights(weights) {
 
 const weightsOf = (rarities) => Object.fromEntries(Object.entries(rarities).map(([id, r]) => [id, r.weight]));
 
-// Caja nueva: ItemProvider (sin él el ítem de la caja sale como barrera) y
-// _dataver (sin él el plugin hace un backup y "migra" el archivo al cargarlo).
+// Caja nueva en 6.3.3. La de 6.6.1 sale de convertirla (así no hay dos plantillas).
+// ItemProvider: sin él el ítem de la caja sale como barrera. _dataver: sin él el
+// plugin hace un backup y "migra" el archivo al cargarlo.
 const BLANK_CRATE = `Name: '&eNueva Caja'
 Description:
 - '&7Descripcion de la caja'
@@ -85,7 +88,7 @@ export function CrateProvider({ children }) {
   const [history, setHistory] = useState([]); // textos anteriores, para deshacer
   const [error, setError] = useState(null);
   const [targetTotal, setTargetTotal] = useState(1000);
-  const [conversionWarnings, setConversionWarnings] = useState(null); // null = no hubo conversión
+  const [conversionWarnings, setConversionWarnings] = useState(null); // { title, items, note }
   const [server, setServer] = useState(null); // carpeta plugins/ExcellentCrates abierta
 
   // Rewards.Rarities vive en el config.yml GLOBAL: se carga de la carpeta del
@@ -111,7 +114,7 @@ export function CrateProvider({ children }) {
     setRarityWeights(server?.rarities ? weightsOf(server.rarities) : { ...DEFAULT_RARITY_WEIGHTS });
   }, [server, setRarityWeights]);
 
-  const open = useCallback((name, src, warnings = null) => {
+  const open = useCallback((name, src, notice = null) => {
     try {
       loadCrateFile(src);
     } catch (e) {
@@ -122,18 +125,18 @@ export function CrateProvider({ children }) {
     setText(src);
     setHistory([]);
     setError(null);
-    setConversionWarnings(warnings);
+    setConversionWarnings(notice);
   }, []);
 
-  /** SpecializedCrates (.crate/.yml) -> crate de ExcellentCrates. Ver specializedConverter.js. */
+  /** SpecializedCrates (.crate/.yml) -> crate de ExcellentCrates 6.3.3. Ver specializedConverter.js. */
   const convertSpecializedFile = useCallback((name, src) => {
     try {
       const parsed = parseSpecializedCrate(src);
       setTargetTotal(parsed.suggestedTargetTotal || 1000);
       open(name.replace(/\.(crate|ya?ml)$/i, '') + '.yml', buildExcellentCratesYaml(parsed), {
-        sourceName: name,
-        rewardCount: parsed.rewards.length,
+        title: `Convertido desde ${name} (SpecializedCrates): ${parsed.rewards.length} reward(s), pesos 1:1 desde el chance original.`,
         items: parsed.warnings,
+        note: 'Los rewards con nbt-tags quedan como preview vanilla; si usabas ítems custom, cargalos a mano.',
       });
     } catch (e) {
       setError(e.message || String(e));
@@ -151,13 +154,19 @@ export function CrateProvider({ children }) {
     }
   }, [setRarityWeights]);
 
+  // Crates de la carpeta con lo editado de la actual incluido.
+  const currentCrates = useCallback(
+    () => (server && fileName && text != null ? { ...server.crates, [fileName]: text } : server?.crates ?? {}),
+    [server, fileName, text],
+  );
+
   const switchCrate = useCallback((name) => {
     if (!server) return;
     // guarda lo editado de la crate actual para no perderlo al volver a ella
-    const crates = fileName && text != null ? { ...server.crates, [fileName]: text } : server.crates;
+    const crates = currentCrates();
     setServer({ ...server, crates });
     open(name, crates[name]);
-  }, [server, fileName, text, open]);
+  }, [server, currentCrates, open]);
 
   const edit = useCallback((fn) => {
     if (text == null) return;
@@ -202,22 +211,28 @@ export function CrateProvider({ children }) {
     server,
     openServer,
     switchCrate,
+    currentCrates,
     canUndo: history.length > 0,
     undo,
     openFile: open,
-    newBlankFile: () => open('nueva_caja.yml', BLANK_CRATE),
+    openConverted: (name, src, warnings) => open(name, src, {
+      title: `Convertida a 6.6.1${warnings.length ? `: ${warnings.length} aviso(s) para revisar` : ' sin avisos'}. Exportala para usarla en el server.`,
+      items: warnings,
+    }),
+    newBlankFile: (format = V661) => open('nueva_caja.yml', format === V661 ? convertCrate(BLANK_CRATE).text : BLANK_CRATE),
     convertSpecializedFile,
     conversionWarnings,
     dismissConversionWarnings: () => setConversionWarnings(null),
     updateWeight: (key, weight) => edit((d) => setRewardWeight(d, key, weight)),
-    /** field puede ser 'Name' o ['Win_Limit', 'Player', 'Enabled'] */
+    /** field puede ser 'Name' o ['Limits', 'Enabled'] */
     updateField: (key, field, v) => edit((d) => setRewardField(d, key, field, v)),
     setRewardNode: (key, field, obj) => edit((d) => setNode(d, ['Rewards', 'List', key, field], obj)),
     updateCrateField: (path, v) => edit((d) => setField(d, path, v)),
     updateCrateStringSeq: (path, values) => edit((d) => setStringSeq(d, path, values)),
+    setCrateNode: (path, obj) => edit((d) => setNode(d, path, obj)),
     deleteCrateField: (path) => edit((d) => deleteField(d, path)),
     addMilestone: (rewardId, openings) => edit((d) => addMilestone(d, rewardId, openings)),
-    createReward: (key, data) => edit((d) => addReward(d, key, data)),
+    createReward: (key, data) => edit((d) => addReward(d, key, data, model?.format)),
     removeReward: (key) => edit((d) => deleteReward(d, key)),
     renameRewardKey: (oldKey, newKey) => edit((d) => renameReward(d, oldKey, newKey)),
     exportYaml: () => text ?? '',

@@ -26,14 +26,14 @@ const NAMED_MINIMESSAGE_COLORS = {
  * aparece típicamente en configs de ExcellentCrates: &-codes, hex legacy,
  * <gradient>, <c:#hex>, <bold>, colores nombrados, </tag> de cierre.
  */
-export function parseMcText(input) {
+export function parseMcText(input, defaultColor = '#FFFFFF') {
   if (!input) return [];
 
-  // Normalizar: reemplazar & codes por marcadores internos que el tokenizer entiende
   let str = String(input);
 
   const runs = [];
-  let state = { color: '#FFFFFF', bold: false, italic: false, underline: false, strike: false, obf: false };
+  const reset = { color: defaultColor, bold: false, italic: false, underline: false, strike: false, obf: false };
+  let state = reset;
   const stack = [];
 
   let i = 0;
@@ -48,6 +48,14 @@ export function parseMcText(input) {
 
   while (i < str.length) {
     const ch = str[i];
+
+    // #RRGGBB suelto: nightcore lo toma como color igual que &#RRGGBB
+    if (ch === '#' && /^[0-9a-fA-F]{6}/.test(str.slice(i + 1, i + 7))) {
+      flush();
+      state = { ...state, color: '#' + str.slice(i + 1, i + 7).toUpperCase() };
+      i += 7;
+      continue;
+    }
 
     // Legacy & codes: &a, &l, &#RRGGBB
     if (ch === '&' && str[i + 1] === '#' && /^[0-9a-fA-F]{6}/.test(str.slice(i + 2, i + 8))) {
@@ -66,7 +74,7 @@ export function parseMcText(input) {
       else if (code === 'n') state = { ...state, underline: true };
       else if (code === 'm') state = { ...state, strike: true };
       else if (code === 'k') state = { ...state, obf: true };
-      else if (code === 'r') state = { color: '#FFFFFF', bold: false, italic: false, underline: false, strike: false, obf: false };
+      else if (code === 'r') state = reset;
       i += 2;
       continue;
     }
@@ -86,7 +94,7 @@ export function parseMcText(input) {
       if (end !== -1) {
         const raw = str.slice(i + 1, end);
         flush();
-        handleTag(raw, state, stack, (s) => (state = s));
+        handleTag(raw, state, stack, (s) => (state = s), reset);
         i = end + 1;
         continue;
       }
@@ -100,7 +108,7 @@ export function parseMcText(input) {
   return runs;
 }
 
-function handleTag(raw, currentState, stack, setState) {
+function handleTag(raw, currentState, stack, setState, reset) {
   const closing = raw.startsWith('/');
   const body = closing ? raw.slice(1) : raw;
   const [tagName, ...rest] = body.split(':');
@@ -126,7 +134,7 @@ function handleTag(raw, currentState, stack, setState) {
   else if (name === 'underlined' || name === 'u') setState({ ...currentState, underline: true });
   else if (name === 'strikethrough' || name === 'st') setState({ ...currentState, strike: true });
   else if (name === 'obfuscated' || name === 'obf') setState({ ...currentState, obf: true });
-  else if (name === 'reset') setState({ color: '#FFFFFF', bold: false, italic: false, underline: false, strike: false, obf: false });
+  else if (name === 'reset') setState(reset);
   else if (name === 'c' || name === 'color' || name === 'colour') {
     const hex = arg.startsWith('#') ? arg : NAMED_MINIMESSAGE_COLORS[arg] || '#FFFFFF';
     setState({ ...currentState, color: hex.toUpperCase() });
@@ -146,8 +154,8 @@ function handleTag(raw, currentState, stack, setState) {
  * Variante que sí interpola gradientes caracter por caracter (usado para el
  * preview "de lujo" del ítem, más costoso que parseMcText plano).
  */
-export function parseMcTextWithGradients(input) {
-  const runs = parseMcText(input);
+export function parseMcTextWithGradients(input, defaultColor) {
+  const runs = parseMcText(input, defaultColor);
   const expanded = [];
   for (const run of runs) {
     if (run._gradient && run._gradient.length >= 2 && run.text.length > 0) {

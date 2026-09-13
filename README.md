@@ -7,6 +7,7 @@ Editor visual para crates de **ExcellentCrates** (plugin de Minecraft/Paper), pa
 - **Panel** con navegación lateral: Recompensas, Configuración, Simulador y Convertir. Con la carpeta del plugin abierta, la barra lateral lista todas las crates con su versión.
 - **Recompensas**: tabla con búsqueda, filtro por rareza, orden por probabilidad y paginación. Cada reward se edita en el lugar: nombre, lore, comandos, rareza, preview (vanilla o custom), permisos y límites (`Win_Limit` en 6.3.3, `Limits` en 6.6.1).
 - **Probabilidad real** de cada reward con el sorteo de dos niveles del plugin: primero la rareza por su Weight global, después el reward dentro de su rareza. Incluye un simulador Monte Carlo con el mismo sorteo.
+- **Editor de previews** (`previews/*.yml`): a la izquierda se configura el menú (tamaño `generic_9xN`, título, slots y lore de las rewards, ítems fijos con material, nombre, lore, prioridad y acción) y a la derecha se ve cómo queda, con las rewards de la caja abierta paginadas y el tooltip ya procesado (`%reward_roll_chance%`, `%empty-if-above%`, `%nf_…%`). Con el pincel se asignan slots haciendo click en el menú.
 - **Configuración de la crate**: preview, animación, llaves y costos (`Key` + `Opening.Cost` en 6.3.3, `CostOptions` en 6.6.1), cooldown y límite de aperturas, comandos al abrir (`Post-Open`), bloque, holograma, efecto y metas.
 - **Edición quirúrgica**: al exportar sólo cambian las líneas que editaste. El resto del archivo sale byte a byte igual, incluidas las líneas largas que SnakeYAML (el guardado del plugin) parte en varias.
 - **Validación contra tu server**: con la carpeta `plugins/ExcellentCrates` abierta usa las rarezas reales de `config.yml` y avisa de llaves, previews, animaciones o templates que no existen, metas rotas, rewards que no entregan nada y costos inválidos.
@@ -69,6 +70,7 @@ src/
   lib/
     crateFile.js          -> modelo de las dos versiones + edición quirúrgica del YAML
     convert661.js         -> conversor 6.3.3 -> 6.6.1
+    previewMenu.js        -> menú de preview: lectura, slots, lore con placeholders
     crateFile.check.mjs   -> check (npm run check)
     weightMath.js         -> pesos, probabilidades, residuos, simulación
     serverContext.js      -> lectura de la carpeta del plugin + validaciones

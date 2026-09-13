@@ -26,13 +26,16 @@ export async function readServerFolder(fileList) {
     throw new Error('No encontré crates/*.yml. Elegí la carpeta plugins/ExcellentCrates completa.');
   }
   const keys = await readAll(/^keys\/([^/]+\.ya?ml)$/i);
+  const previews = await readAll(/^previews\/([^/]+\.ya?ml)$/i);
+  const idsOf = (files) => Object.keys(files).map((name) => name.replace(/\.ya?ml$/i, '').toLowerCase()).sort();
 
   const server = {
     crates,
     keys,
+    previews,
     formats: Object.fromEntries(Object.entries(crates).map(([name, text]) => [name, safeFormat(text)])),
-    keyIds: Object.keys(keys).map((name) => name.replace(/\.ya?ml$/i, '').toLowerCase()).sort(),
-    previewIds: idsIn(/^previews\/([^/]+)\.ya?ml$/i),
+    keyIds: idsOf(keys),
+    previewIds: idsOf(previews),
     animationIds: idsIn(/^openings\/[^/]+\/([^/]+)\.ya?ml$/i),
     hologramIds: [],
     rarities: null,

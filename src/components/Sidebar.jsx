@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { Box, Gift, Settings2, Dices, ArrowUpCircle, FolderOpen, FileUp, FilePlus2, Search } from 'lucide-react';
+import { Box, Gift, Settings2, LayoutGrid, Dices, ArrowUpCircle, FolderOpen, FileUp, FilePlus2, Search } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
 import { V633 } from '../lib/crateFile.js';
 import { VersionBadge } from './fields.jsx';
@@ -7,6 +7,7 @@ import { VersionBadge } from './fields.jsx';
 const NAV = [
   { id: 'rewards', label: 'Recompensas', icon: Gift },
   { id: 'settings', label: 'Configuración', icon: Settings2 },
+  { id: 'previews', label: 'Previews', icon: LayoutGrid },
   { id: 'simulator', label: 'Simulador', icon: Dices },
   { id: 'convert', label: 'Convertir a 6.6.1', icon: ArrowUpCircle },
 ];

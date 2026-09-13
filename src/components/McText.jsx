@@ -1,8 +1,8 @@
 import React from 'react';
 import { parseMcTextWithGradients } from '../lib/mcText.js';
 
-export default function McText({ text, className = '' }) {
-  const runs = parseMcTextWithGradients(text || '');
+export default function McText({ text, className = '', defaultColor }) {
+  const runs = parseMcTextWithGradients(text || '', defaultColor);
   if (runs.length === 0) return null;
 
   return (

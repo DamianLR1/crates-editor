@@ -9,6 +9,10 @@ import {
 } from './crateFile.js';
 import { convertCrate, convertKey } from './convert661.js';
 import { computePercentages } from './weightMath.js';
+import {
+  readPreview, layoutSlots, parseSlots, formatSlots, toggleSlot, menuShape, applyEmptyLines, fillText,
+  renderRewardLore, rewardVars, rewardLimit,
+} from './previewMenu.js';
 
 // Líneas de `b` que no están en la misma posición en `a`
 const changedLines = (a, b) => b.split('\n').filter((line, i) => line !== a.split('\n')[i]);
@@ -248,6 +252,64 @@ assert.deepEqual(pct(pool, { common: 70, rare: 30 }), [70, 30]);
 assert.deepEqual(pct([pool[0], { ...pool[1], rarity: 'uncommon' }], { common: 70, rare: 30 }), [25, 75]);
 // peso 0 no se sortea
 assert.deepEqual(pct([{ ...pool[0], weight: 0 }, pool[1]], { common: 70, rare: 30 }), [0, 100]);
+
+// ---------- Menú de preview ----------
+
+assert.deepEqual(parseSlots('0,4, 9-11'), [0, 4, 9, 10, 11]);
+assert.deepEqual(parseSlots(7), [7]);
+assert.deepEqual(toggleSlot([3, 1], 1), [3]);
+assert.deepEqual(toggleSlot([3], 1), [3, 1], 'agrega al final: en Reward.Slots el orden importa');
+assert.deepEqual(menuShape('minecraft:generic_9x6'), { cols: 9, rows: 6 });
+// NightMeta.addEmptyLines
+assert.deepEqual(applyEmptyLines(['a', '%empty-if-above%', 'b']), ['a', '', 'b']);
+assert.deepEqual(applyEmptyLines(['%empty-if-above%', 'b']), ['b']);
+assert.deepEqual(applyEmptyLines(['a', '%empty-if-below%']), ['a']);
+assert.deepEqual(applyEmptyLines(['a', '', '%empty-if-above%', 'b']), ['a', '', 'b']);
+// PAPI NumberFormatter sobre el placeholder ya reemplazado
+assert.equal(fillText('%nf_#.##_%reward_roll_chance%%%', { reward_roll_chance: '12.3456' }), '12.35%');
+assert.equal(fillText('%nf_#.##_%x%%', { x: '5.0' }), '5');
+
+const PREVIEW = `# comentario de cabecera
+Settings:
+  MenuType: minecraft:generic_9x3
+  Title: '%crate_name%'
+Reward:
+  Hide_Unavailable: true # comentario
+  Slots: 10,11
+  Name: '%reward_name%'
+  Lore:
+    Default:
+    - '%reward_description%'
+    - '%empty-if-above%'
+    - 'Chance: %reward_roll_chance%%'
+    - '%limits%'
+    LimitInfo:
+    - 'Quedan %amount%'
+Content:
+  fondo:
+    Priority: 0
+    Item:
+      Material: minecraft:black_stained_glass_pane
+    Slots: 0,1,10
+  cerrar:
+    Priority: 10
+    Item:
+      Material: minecraft:iron_door
+    Slots: '1'
+    Type: close
+`;
+const pv = readPreview(PREVIEW);
+assert.deepEqual(pv.reward.slots, [10, 11]);
+const grid = layoutSlots(pv);
+assert.equal(grid.size, 27);
+assert.equal(grid.slots[1].id, 'cerrar', 'gana la prioridad más alta');
+assert.equal(grid.slots[0].id, 'fondo');
+const sample = { key: 'r', displayName: 'R', weight: 5, percent: 12.5, description: ['linea'], limits: { enabled: true, playerAmount: 3, globalAmount: -1 } };
+assert.deepEqual(renderRewardLore(pv.reward.lore, sample, rewardVars(sample, {}, 'Común'), pv.reward.limitInfo, rewardLimit(sample)), ['linea', '', 'Chance: 12.5%', 'Quedan 3']);
+// Pintar un slot toca una línea y conserva los comentarios
+out = editCrateText(PREVIEW, (d) => setField(d, ['Content', 'cerrar', 'Slots'], formatSlots(toggleSlot(pv.content[1].slots, 22))));
+assert.deepEqual(changedLines(PREVIEW, out), ["    Slots: '1,22'"], 'conserva las comillas del valor original');
+assert.ok(out.startsWith('# comentario de cabecera\n') && out.includes('Hide_Unavailable: true # comentario'));
 
 // ---------- Crates reales (opcional) ----------
 

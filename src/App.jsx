@@ -9,6 +9,7 @@ import RewardsTable from './components/RewardsTable.jsx';
 import CrateMetaPanel from './components/CrateMetaPanel.jsx';
 import Simulator from './components/Simulator.jsx';
 import ConverterPanel from './components/ConverterPanel.jsx';
+import PreviewEditor from './components/PreviewEditor.jsx';
 import ConversionWarningsBanner from './components/ConversionWarningsBanner.jsx';
 import RarityPanel from './components/RarityPanel.jsx';
 import { Datalists } from './components/fields.jsx';
@@ -48,6 +49,7 @@ function AppContent() {
             </>
           )}
           {section === 'settings' && <div className="max-w-5xl"><CrateMetaPanel /></div>}
+          {section === 'previews' && <PreviewEditor />}
           {section === 'simulator' && (
             <div className={SIDE_LAYOUT}>
               <Simulator />

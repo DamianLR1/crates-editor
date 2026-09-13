@@ -12,6 +12,7 @@ import {
   deleteReward,
   renameReward,
   addMilestone,
+  parseYaml,
   V661,
 } from '../lib/crateFile.js';
 import { convertCrate } from '../lib/convert661.js';
@@ -90,6 +91,8 @@ export function CrateProvider({ children }) {
   const [targetTotal, setTargetTotal] = useState(1000);
   const [conversionWarnings, setConversionWarnings] = useState(null); // { title, items, note }
   const [server, setServer] = useState(null); // carpeta plugins/ExcellentCrates abierta
+  const [preview, setPreview] = useState(null); // menú de preview abierto: { name, text }
+  const [previewHistory, setPreviewHistory] = useState([]);
 
   // Rewards.Rarities vive en el config.yml GLOBAL: se carga de la carpeta del
   // server o se configura a mano (persistido localmente).
@@ -190,6 +193,46 @@ export function CrateProvider({ children }) {
     setHistory(history.slice(0, -1));
   }, [history]);
 
+  const openPreview = useCallback((name, src) => {
+    try {
+      parseYaml(src);
+    } catch (e) {
+      setError(e.message || String(e));
+      return;
+    }
+    setPreview({ name, text: src });
+    setPreviewHistory([]);
+    setError(null);
+  }, []);
+
+  // Lo editado del preview queda también en la carpeta abierta (para volver a él o cambiar de crate).
+  const applyPreview = useCallback((name, next) => {
+    setPreview({ name, text: next });
+    setServer((s) => (s ? { ...s, previews: { ...s.previews, [name]: next } } : s));
+  }, []);
+
+  const editPreview = useCallback((fn) => {
+    if (!preview) return;
+    let next;
+    try {
+      next = editCrateText(preview.text, fn);
+      parseYaml(next);
+    } catch (e) {
+      setError(e.message || String(e));
+      return;
+    }
+    if (next === preview.text) return;
+    setPreviewHistory((h) => [...h.slice(-49), preview.text]);
+    applyPreview(preview.name, next);
+    setError(null);
+  }, [preview, applyPreview]);
+
+  const undoPreview = useCallback(() => {
+    if (!preview || previewHistory.length === 0) return;
+    applyPreview(preview.name, previewHistory[previewHistory.length - 1]);
+    setPreviewHistory(previewHistory.slice(0, -1));
+  }, [preview, previewHistory, applyPreview]);
+
   const validation = useMemo(() => {
     if (!model) return null;
     const pool = validatePool(model.rewards, targetTotal, rarityWeights);
@@ -236,6 +279,17 @@ export function CrateProvider({ children }) {
     removeReward: (key) => edit((d) => deleteReward(d, key)),
     renameRewardKey: (oldKey, newKey) => edit((d) => renameReward(d, oldKey, newKey)),
     exportYaml: () => text ?? '',
+    preview,
+    openPreview,
+    closePreview: () => setPreview(null),
+    canUndoPreview: previewHistory.length > 0,
+    undoPreview,
+    previewEdit: {
+      set: (path, v) => editPreview((d) => setField(d, path, v)),
+      seq: (path, values) => editPreview((d) => setStringSeq(d, path, values)),
+      node: (path, obj) => editPreview((d) => setNode(d, path, obj)),
+      del: (path) => editPreview((d) => deleteField(d, path)),
+    },
   };
 
   return <CrateContext.Provider value={value}>{children}</CrateContext.Provider>;

@@ -187,11 +187,16 @@ function drawLine(canvas, runs, font, scale, shadow) {
         tint.width = Math.ceil(s.w * scale);
         tint.height = Math.ceil(s.h * scale);
         t.imageSmoothingEnabled = false;
+        // como el juego: color del texto × textura. Las letras son blancas (quedan del color), los
+        // glifos con imagen (emojis, megatags de Nexo) conservan sus colores con texto blanco
+        const glyphImage = () => t.drawImage(s.img, s.sx, s.sy, s.sw, s.sh, 0, 0, tint.width, tint.height);
         t.globalCompositeOperation = 'source-over';
-        t.drawImage(s.img, s.sx, s.sy, s.sw, s.sh, 0, 0, tint.width, tint.height);
-        t.globalCompositeOperation = 'source-in';
+        glyphImage();
+        t.globalCompositeOperation = 'multiply';
         t.fillStyle = color;
         t.fillRect(0, 0, tint.width, tint.height);
+        t.globalCompositeOperation = 'destination-in'; // multiply también pinta lo transparente: se recorta con el glifo
+        glyphImage();
         ctx.drawImage(tint, px, py + s.top * scale);
       }
     }

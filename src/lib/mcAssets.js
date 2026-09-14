@@ -306,7 +306,7 @@ function projectModel(elements, gui, light, tex) {
       });
     }
   }
-  return faces.sort((a, b) => a.depth - b.depth).map(({ depth, ...face }) => face);
+  return faces.sort((a, b) => a.depth - b.depth).map(({ depth: _depth, ...face }) => face);
 }
 
 /** Hash de textura de una skin a partir de SkinURL (hash o URL completa). */

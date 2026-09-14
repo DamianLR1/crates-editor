@@ -16,6 +16,15 @@ const SORTS = {
 };
 const COLUMNS = 'grid grid-cols-[minmax(0,1fr)_7.5rem_6rem_1.5rem] gap-4';
 const selectCls = 'bg-ink-800 border border-ink-600 rounded-lg px-2 py-1.5 text-xs text-parch-100 outline-none focus:border-gold-500';
+const DECIMALS_KEY = 'editor-excellentcrates:decimales';
+const readDecimals = () => {
+  try {
+    const saved = localStorage.getItem(DECIMALS_KEY);
+    return saved === null ? 6 : Math.min(6, Math.max(0, Math.round(Number(saved)) || 0));
+  } catch {
+    return 6; // sin storage (modo privado): el default
+  }
+};
 
 export default function RewardsTable() {
   const { model, updateWeight, removeReward, createReward, renameRewardKey, rarityWeights } = useCrate();
@@ -25,6 +34,11 @@ export default function RewardsTable() {
   const [sort, setSort] = useState('file');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
+  // sólo cómo se ve el %: el valor real (y el peso) no se redondea
+  const [decimals, setDecimals] = useState(readDecimals);
+  useEffect(() => {
+    try { localStorage.setItem(DECIMALS_KEY, String(decimals)); } catch { /* sin storage */ }
+  }, [decimals]);
 
   const withPercents = useMemo(() => computePercentages(model.rewards, rarityWeights), [model.rewards, rarityWeights]);
   const maxPercent = Math.max(...withPercents.map((r) => r.percent), 1);
@@ -88,6 +102,15 @@ export default function RewardsTable() {
         <select value={sort} onChange={resetting(setSort)} className={selectCls} aria-label="Ordenar">
           {Object.entries(SORTS).map(([id, [label]]) => <option key={id} value={id}>{label}</option>)}
         </select>
+        <select
+          value={decimals}
+          onChange={(e) => setDecimals(Number(e.target.value))}
+          className={selectCls}
+          aria-label="Decimales del porcentaje"
+          title="Sólo cambia cómo se ve el %: el valor real no se redondea"
+        >
+          {[0, 1, 2, 3, 4, 5, 6].map((n) => <option key={n} value={n}>{n === 0 ? '% sin decimales' : `% con ${n} decimal${n > 1 ? 'es' : ''}`}</option>)}
+        </select>
       </div>
 
       <div className={`${COLUMNS} px-5 py-2 text-[10px] uppercase tracking-wider text-ink-500 border-b border-ink-800`}>
@@ -103,6 +126,7 @@ export default function RewardsTable() {
             key={reward.key}
             reward={reward}
             maxPercent={maxPercent}
+            decimals={decimals}
             expanded={expandedKey === reward.key}
             onToggle={() => setExpandedKey(expandedKey === reward.key ? null : reward.key)}
             onWeightChange={(w) => updateWeight(reward.key, w)}
@@ -168,7 +192,7 @@ function PageButton({ children, active, disabled, onClick, label }) {
   );
 }
 
-function RewardRow({ reward, maxPercent, expanded, onToggle, onWeightChange, onDelete, onRename }) {
+function RewardRow({ reward, maxPercent, decimals, expanded, onToggle, onWeightChange, onDelete, onRename }) {
   const [localWeight, setLocalWeight] = useState(reward.weight);
   useEffect(() => setLocalWeight(reward.weight), [reward.weight]);
 
@@ -198,7 +222,9 @@ function RewardRow({ reward, maxPercent, expanded, onToggle, onWeightChange, onD
           </div>
         </div>
 
-        <p className="text-right text-sm font-semibold text-parch-100 font-mono-tab">{formatPercent(reward.percent)}</p>
+        <p className="text-right text-sm font-semibold text-parch-100 font-mono-tab" title={`Exacto: ${formatPercent(reward.percent, 10)}`}>
+          {reward.percent.toFixed(decimals)}%
+        </p>
 
         <input
           type="number"

@@ -1,22 +1,26 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   LayoutGrid, Undo2, Download, Plus, Trash2, Paintbrush, ChevronLeft, ChevronRight, ChevronDown,
-  FileCode2, FileUp, FilePlus2, X, Eye, AlertTriangle,
+  FileCode2, FileUp, FilePlus2, X, Eye, AlertTriangle, CheckCircle2, Image as ImageIcon,
 } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
 import { computePercentages, rarityOf } from '../lib/weightMath.js';
 import {
   readPreview, layoutSlots, parseSlots, formatSlots, toggleSlot, fillText, rewardVars, rewardLimit,
-  renderRewardLore, rewardMaterial, itemVisual, prettyMaterial, previewIssues,
+  renderRewardLore, rewardItem, itemVisual, prettyMaterial, previewIssues,
   MENU_TYPES, ITEM_TYPES, COMMON_MATERIALS, NEW_PREVIEW,
 } from '../lib/previewMenu.js';
 import McText from './McText.jsx';
+import { McItem, McBitmapText } from './McRender.jsx';
 import { Button, Card, Field, Toggle, TextInput, NumberInput, LinesInput, inputCls, downloadText } from './fields.jsx';
 
-// Colores del inventario vanilla
+// Colores del inventario vanilla (se usan si no hay texturas del juego cargadas)
 const GUI = { background: '#c6c6c6', border: '3px solid', borderColor: '#ffffff #555555 #555555 #ffffff' };
 const SLOT = { background: '#8b8b8b', border: '2px solid', borderColor: '#373737 #ffffff #ffffff #373737' };
-const TOOLTIP = { background: 'rgba(16,0,16,0.94)', border: '2px solid', borderColor: '#5000ff #28007f #28007f #5000ff' };
+// Tooltip del juego: fondo 0xF0100010 y borde en degradé 0x505000FF -> 0x5028007F
+const TOOLTIP_BG = 'rgba(16,0,16,0.94)';
+const TOOLTIP_BORDER = 'linear-gradient(rgba(80,0,255,0.31), rgba(40,0,127,0.31)) 1';
+const SCALES = [1, 2, 3];
 
 export default function PreviewEditor() {
   const { model, server, preview, openPreview } = useCrate();
@@ -83,6 +87,7 @@ function Picker({ ownName }) {
 function Workspace() {
   const {
     model, fileName, preview, closePreview, previewEdit: edit, undoPreview, canUndoPreview, rarityWeights, rarityNames,
+    mcAssets, mcFont,
   } = useCrate();
   const p = useMemo(() => readPreview(preview.text), [preview.text]);
   const layout = layoutSlots(p);
@@ -91,7 +96,8 @@ function Workspace() {
   const [hover, setHover] = useState(null);
   const [page, setPage] = useState(0);
   const [showYaml, setShowYaml] = useState(false);
-  const [showNumbers, setShowNumbers] = useState(true);
+  const [showNumbers, setShowNumbers] = useState(false);
+  const [scale, setScale] = useState(2);
 
   const crateVars = { crate_name: model.name ?? '', crate_id: String(fileName ?? '').replace(/\.ya?ml$/i, '') };
   // PreviewMenu: rewards sorteables en el orden del archivo, repartidas en Reward.Slots por página
@@ -115,6 +121,13 @@ function Workspace() {
   const isHidden = (item) => (item.type === 'page_next' && current >= pages - 1)
     || (item.type === 'page_previous' && current === 0)
     || (item.type === 'milestones' && model.milestones.list.length === 0);
+
+  // qué se dibuja en cada slot
+  const cells = layout.slots.map((item, slot) => {
+    const reward = rewardAt.get(slot);
+    if (reward) return rewardItem(reward);
+    return item && { material: item.material, skin: item.skinUrl, glint: item.glint, amount: item.amount, dim: isHidden(item) };
+  });
 
   const clickSlot = (slot) => {
     if (brush === 'reward') return edit.set(['Reward', 'Slots'], formatSlots(toggleSlot(p.reward.slots, slot)));
@@ -158,7 +171,7 @@ function Workspace() {
       };
     } else if (item) {
       tip = item.hideTooltip
-        ? { hidden: true, source: `${item.id} · slot ${hover}` }
+        ? { hidden: true, source: `${item.id} · slot ${hover} · sin tooltip (Hide_Tooltip)` }
         : {
           title: fillText(item.displayName ?? prettyMaterial(item.material), crateVars),
           lore: item.lore.map((l) => fillText(l, crateVars)),
@@ -166,6 +179,9 @@ function Workspace() {
         };
     }
   }
+
+  const chest = mcAssets?.gui && layout.cols === 9; // inventario con la textura del juego
+  const slotProps = { cells, highlighted, hover, setHover, onClick: clickSlot, showNumbers, brush };
 
   return (
     <div className="grid gap-6 items-start xl:grid-cols-[minmax(0,27rem)_minmax(0,1fr)]">
@@ -256,50 +272,40 @@ function Workspace() {
       </div>
 
       <div className="min-w-0 space-y-4 xl:sticky xl:top-20">
+        <AssetsBar />
         <Card
           title="Vista previa"
           icon={Eye}
-          actions={pages > 1 && (
-            <div className="flex items-center gap-1 text-xs text-ink-500">
-              <Button variant="ghost" icon={ChevronLeft} onClick={() => setPage(Math.max(0, current - 1))} disabled={current === 0} title="Página anterior del menú" />
-              <span className="font-mono-tab">{current + 1}/{pages}</span>
-              <Button variant="ghost" icon={ChevronRight} onClick={() => setPage(Math.min(pages - 1, current + 1))} disabled={current >= pages - 1} title="Página siguiente del menú" />
+          actions={(
+            <div className="flex items-center gap-3 text-xs text-ink-500">
+              {chest && (
+                <div className="flex items-center gap-1" role="group" aria-label="Escala de la GUI">
+                  {SCALES.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setScale(s)}
+                      className={`h-6 min-w-7 rounded-md px-1.5 font-mono-tab ${s === scale ? 'bg-gold-500/15 text-gold-400' : 'hover:text-parch-200'}`}
+                    >
+                      {s}x
+                    </button>
+                  ))}
+                </div>
+              )}
+              {pages > 1 && (
+                <div className="flex items-center gap-1">
+                  <Button variant="ghost" icon={ChevronLeft} onClick={() => setPage(Math.max(0, current - 1))} disabled={current === 0} title="Página anterior del menú" />
+                  <span className="font-mono-tab">{current + 1}/{pages}</span>
+                  <Button variant="ghost" icon={ChevronRight} onClick={() => setPage(Math.min(pages - 1, current + 1))} disabled={current >= pages - 1} title="Página siguiente del menú" />
+                </div>
+              )}
             </div>
           )}
         >
-          <div className="overflow-x-auto">
-            <div className="inline-block p-2" style={GUI}>
-              <div className="mb-1.5 px-0.5 text-sm whitespace-nowrap">
-                {/* el título de un inventario vanilla es gris oscuro si no tiene color */}
-                <McText text={fillText(p.title, crateVars)} defaultColor="#404040" />
-              </div>
-              <div className="grid" style={{ gridTemplateColumns: `repeat(${layout.cols}, 2.5rem)` }} data-testid="menu-grid">
-                {layout.slots.map((item, slot) => {
-                  const reward = rewardAt.get(slot);
-                  const shown = reward
-                    ? { visual: itemVisual(rewardMaterial(reward)) }
-                    : item && { visual: itemVisual(item.material), glint: item.glint, amount: item.amount, dim: isHidden(item) };
-                  return (
-                    <button
-                      key={slot}
-                      type="button"
-                      aria-label={`Slot ${slot}`}
-                      onClick={() => clickSlot(slot)}
-                      onMouseEnter={() => setHover(slot)}
-                      onMouseLeave={() => setHover(null)}
-                      className={`relative w-10 h-10 flex items-center justify-center ${brush ? 'cursor-crosshair' : 'cursor-pointer'}`}
-                      style={SLOT}
-                    >
-                      {shown && <ItemIcon {...shown} />}
-                      {highlighted.includes(slot) && <span className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-gold-400" />}
-                      {hover === slot && <span className="pointer-events-none absolute inset-0 bg-white/30" />}
-                      {showNumbers && <span className="pointer-events-none absolute left-0.5 top-0 text-[8px] leading-none text-black/45">{slot}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          {chest ? (
+            <McChest assets={mcAssets} font={mcFont} scale={scale} rows={layout.rows} title={fillText(p.title, crateVars)} tip={tip} {...slotProps} />
+          ) : (
+            <FlatGrid cols={layout.cols} title={fillText(p.title, crateVars)} {...slotProps} />
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-ink-500">
             <label className="flex items-center gap-1.5 cursor-pointer">
@@ -315,7 +321,11 @@ function Workspace() {
               <span>Click en un ítem para editarlo · con el pincel asignás slots · las flechas cambian de página.</span>
             )}
           </div>
-          <Tooltip tip={tip} />
+          {chest ? (
+            <p className="mt-2 min-h-4 text-[11px] text-ink-500" aria-live="polite">{tip?.source}</p>
+          ) : (
+            <Tooltip tip={tip} />
+          )}
         </Card>
 
         {issues.length > 0 && (
@@ -328,19 +338,192 @@ function Workspace() {
           </div>
         )}
         <p className="text-[11px] text-ink-500 leading-relaxed">
-          Las rewards se ven como las vería un jugador con permiso y sin límites alcanzados. Los íconos son aproximados:
-          el editor no usa las texturas de Minecraft.
+          Las rewards se ven como las vería un jugador con permiso y sin límites alcanzados.
+          {!mcAssets && ' Sin las texturas del juego, los íconos son aproximados.'}
         </p>
       </div>
     </div>
   );
 }
 
-function BrushButton({ active, onClick }) {
-  return <Button variant={active ? 'primary' : 'default'} icon={Paintbrush} onClick={onClick}>{active ? 'Pintando…' : 'Pintar slots'}</Button>;
+// ---- Texturas del juego ----
+
+function AssetsBar() {
+  const { mcAssets, mcFont, mcStatus, loadMcAssets, clearMcAssets } = useCrate();
+  const fileRef = useRef(null);
+  const addRef = useRef(null);
+  const hasUnifont = mcAssets && [...mcAssets.files.keys()].some((k) => k.endsWith('.hex'));
+  const pick = (ref) => ref.current.click();
+
+  return (
+    <div className="rounded-xl border border-ink-700 bg-ink-900 px-4 py-3 text-xs">
+      {mcAssets ? (
+        <div className="space-y-1.5">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-500">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            Texturas de <span className="text-parch-200">{mcAssets.label}</span>
+            {mcFont ? '· fuente del juego' : '· cargando fuente…'}
+            <button className="underline hover:text-parch-200" onClick={() => pick(addRef)}>Agregar archivo</button>
+            <button className="underline hover:text-parch-200" onClick={() => pick(fileRef)}>Cambiar</button>
+            <button className="underline hover:text-crimson-400" onClick={clearMcAssets}>Quitar</button>
+          </p>
+          {!hasUnifont && (
+            <p className="text-ink-500 leading-relaxed">
+              Para versalitas (ᴄᴀᴊᴀ), flechas y emojis falta la fuente unifont: agregá el <code className="text-parch-200">unifont.zip</code> del
+              juego (está en <code className="text-parch-200">.minecraft\assets\objects</code>, con nombre hash).
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="flex items-start gap-3">
+          <ImageIcon className="w-4 h-4 mt-0.5 shrink-0 text-gold-400" strokeWidth={1.5} />
+          <div className="flex-1 space-y-2">
+            <p className="text-parch-200">Ver el menú con las texturas y la fuente de Minecraft</p>
+            <p className="text-ink-500 leading-relaxed">
+              Elegí el .jar de tu cliente, por ejemplo <code className="text-parch-200">%APPDATA%\.minecraft\versions\1.21.4\1.21.4.jar</code>, y si
+              querés un resource pack .zip. Se leen en tu navegador y quedan guardados acá: no se suben a ningún lado (son assets de
+              Mojang y no se publican con el editor).
+            </p>
+            <Button icon={FileUp} onClick={() => pick(fileRef)} disabled={mcStatus === 'loading'}>Cargar .jar / .zip</Button>
+          </div>
+        </div>
+      )}
+      {mcStatus === 'loading' && <p className="mt-2 text-gold-400">Leyendo texturas…</p>}
+      {mcStatus && mcStatus !== 'loading' && <p className="mt-2 text-crimson-400">{mcStatus}</p>}
+      {/* sin `accept`: el unifont.zip del juego se guarda con nombre hash, sin extensión */}
+      <input ref={fileRef} data-testid="mc-assets" type="file" multiple className="hidden" onChange={(e) => { loadMcAssets(e.target.files); e.target.value = ''; }} />
+      <input ref={addRef} data-testid="mc-assets-add" type="file" multiple className="hidden" onChange={(e) => { loadMcAssets(e.target.files, true); e.target.value = ''; }} />
+    </div>
+  );
 }
 
-function ItemIcon({ visual, glint = false, amount = 1, dim = false }) {
+/** Inventario de cofre del juego (textures/gui/container/generic_54.png), como ContainerScreen. */
+function McChest({ assets, font, scale, rows, title, tip, cells, highlighted, hover, setHover, onClick, showNumbers, brush }) {
+  const top = 17 + rows * 18; // encabezado + filas del cofre; debajo va el inventario del jugador (96 px)
+  const layer = (sy, height) => ({
+    width: 176 * scale,
+    height: height * scale,
+    backgroundImage: `url(${assets.gui})`,
+    backgroundSize: `${256 * scale}px ${256 * scale}px`,
+    backgroundPosition: `0 ${-sy * scale}px`,
+    imageRendering: 'pixelated',
+  });
+  const label = (text, x, y) => (
+    <div className="pointer-events-none absolute" style={{ left: x * scale, top: (y - 2) * scale }}>
+      {font
+        ? <McBitmapText text={text} font={font} scale={scale} defaultColor="#404040" shadow={false} />
+        : <McText text={text} defaultColor="#404040" className="whitespace-nowrap text-sm" />}
+    </div>
+  );
+  const col = hover % 9;
+  const row = Math.floor(hover / 9);
+  const tipStyle = { top: (17 + row * 18 - 12) * scale, ...(col < 5 ? { left: (7 + col * 18 + 22) * scale } : { right: (176 - 7 - col * 18 + 4) * scale }) };
+
+  return (
+    <div className="relative select-none" style={{ width: 176 * scale, height: (top + 96) * scale }} data-testid="menu-grid">
+      <div style={layer(0, top)} />
+      <div style={layer(126, 96)} />
+      {label(title, 8, 6)}
+      {label('Inventario', 8, top + 3)}
+      {cells.map((cell, slot) => (
+        <button
+          key={slot}
+          type="button"
+          aria-label={`Slot ${slot}`}
+          onClick={() => onClick(slot)}
+          onMouseEnter={() => setHover(slot)}
+          onMouseLeave={() => setHover(null)}
+          className={`absolute ${brush ? 'cursor-crosshair' : 'cursor-pointer'}`}
+          style={{ left: (7 + (slot % 9) * 18) * scale, top: (17 + Math.floor(slot / 9) * 18) * scale, width: 18 * scale, height: 18 * scale }}
+        >
+          {cell && (
+            <span className="absolute" style={{ left: scale, top: scale }}>
+              <SlotItem cell={cell} assets={assets} font={font} size={16 * scale} scale={scale} />
+            </span>
+          )}
+          {hover === slot && <span className="pointer-events-none absolute bg-white/50" style={{ left: scale, top: scale, width: 16 * scale, height: 16 * scale }} />}
+          {highlighted.includes(slot) && <span className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-gold-400" />}
+          {showNumbers && <span className="pointer-events-none absolute left-0.5 top-0 text-[8px] leading-none text-black/50">{slot}</span>}
+        </button>
+      ))}
+      {tip && !tip.hidden && hover != null && <McTooltip tip={tip} font={font} scale={scale} style={tipStyle} />}
+    </div>
+  );
+}
+
+function McTooltip({ tip, font, scale, style }) {
+  const line = (text, key) => (font
+    ? <McBitmapText key={key} text={text} font={font} scale={scale} />
+    : <McText key={key} text={text || ' '} className="block whitespace-nowrap text-xs" />);
+  return (
+    <div className="pointer-events-none absolute z-30" style={{ ...style, background: TOOLTIP_BG, padding: scale }}>
+      <div style={{ border: `${scale}px solid transparent`, borderImage: TOOLTIP_BORDER, padding: `${scale}px ${2 * scale}px` }}>
+        {line(tip.title, 'title')}
+        {tip.lore.length > 0 && <div style={{ height: 2 * scale }} />}
+        {tip.lore.map((text, i) => line(text, i))}
+      </div>
+    </div>
+  );
+}
+
+// ---- Sin texturas: grilla aproximada ----
+
+function FlatGrid({ cols, title, cells, highlighted, hover, setHover, onClick, showNumbers, brush }) {
+  return (
+    <div className="overflow-x-auto">
+      <div className="inline-block p-2" style={GUI}>
+        <div className="mb-1.5 px-0.5 text-sm whitespace-nowrap">
+          {/* el título de un inventario vanilla es gris oscuro si no tiene color */}
+          <McText text={title} defaultColor="#404040" />
+        </div>
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${cols}, 2.5rem)` }} data-testid="menu-grid">
+          {cells.map((cell, slot) => (
+            <button
+              key={slot}
+              type="button"
+              aria-label={`Slot ${slot}`}
+              onClick={() => onClick(slot)}
+              onMouseEnter={() => setHover(slot)}
+              onMouseLeave={() => setHover(null)}
+              className={`relative w-10 h-10 flex items-center justify-center ${brush ? 'cursor-crosshair' : 'cursor-pointer'}`}
+              style={SLOT}
+            >
+              {cell && <SlotItem cell={cell} size={36} />}
+              {highlighted.includes(slot) && <span className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-gold-400" />}
+              {hover === slot && <span className="pointer-events-none absolute inset-0 bg-white/30" />}
+              {showNumbers && <span className="pointer-events-none absolute left-0.5 top-0 text-[8px] leading-none text-black/45">{slot}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Contenido de un slot: textura del juego si hay, si no un ícono aproximado; y la cantidad abajo a la derecha. */
+function SlotItem({ cell, assets = null, font = null, size, scale = 2 }) {
+  const fallback = <ItemIcon visual={itemVisual(cell.material)} glint={cell.glint} dim={cell.dim} />;
+  return (
+    <span className="relative block" style={{ width: size, height: size }}>
+      {assets
+        ? <McItem assets={assets} material={cell.material} skin={cell.skin} glint={cell.glint} dim={cell.dim} size={size} fallback={fallback} />
+        : fallback}
+      {cell.amount > 1 && (
+        font ? (
+          <span className="pointer-events-none absolute" style={{ right: -2 * scale, top: 7 * scale }}>
+            <McBitmapText text={String(cell.amount)} font={font} scale={scale} />
+          </span>
+        ) : (
+          <span className="pointer-events-none absolute bottom-0 right-0.5 text-[10px] font-bold leading-none text-white" style={{ textShadow: '1px 1px 0 #3f3f3f' }}>
+            {cell.amount}
+          </span>
+        )
+      )}
+    </span>
+  );
+}
+
+function ItemIcon({ visual, glint = false, dim = false }) {
   const opacity = dim ? 0.35 : 1;
   if (visual.pane) {
     return <span className="absolute inset-[3px]" style={{ opacity, background: visual.color, boxShadow: 'inset 0 0 0 2px rgba(255,255,255,0.22)' }} />;
@@ -353,9 +536,6 @@ function ItemIcon({ visual, glint = false, amount = 1, dim = false }) {
       >
         {visual.glyph ?? <span className="text-[10px] font-bold tracking-tight">{visual.label}</span>}
       </span>
-      {amount > 1 && (
-        <span className="absolute bottom-0 right-0.5 text-[10px] font-bold leading-none text-white" style={{ textShadow: '1px 1px 0 #3f3f3f' }}>{amount}</span>
-      )}
     </span>
   );
 }
@@ -363,9 +543,9 @@ function ItemIcon({ visual, glint = false, amount = 1, dim = false }) {
 function Tooltip({ tip }) {
   return (
     <div className="mt-3 min-h-24" aria-live="polite">
-      {tip?.hidden && <p className="text-xs text-ink-500">{tip.source}: sin tooltip (Hide_Tooltip).</p>}
+      {tip?.hidden && <p className="text-xs text-ink-500">{tip.source}</p>}
       {tip && !tip.hidden && (
-        <div className="inline-block max-w-full rounded px-2.5 py-2 text-xs text-parch-100" style={TOOLTIP}>
+        <div className="inline-block max-w-full rounded px-2.5 py-2 text-xs text-parch-100" style={{ background: TOOLTIP_BG, border: '2px solid', borderColor: '#5000ff #28007f #28007f #5000ff' }}>
           <McText text={tip.title} className="block text-sm" />
           {tip.lore.map((line, i) => <McText key={i} text={line || ' '} className="block" />)}
           <p className="mt-1.5 text-[10px] text-ink-500">{tip.source}</p>
@@ -375,7 +555,12 @@ function Tooltip({ tip }) {
   );
 }
 
+function BrushButton({ active, onClick }) {
+  return <Button variant={active ? 'primary' : 'default'} icon={Paintbrush} onClick={onClick}>{active ? 'Pintando…' : 'Pintar slots'}</Button>;
+}
+
 function ContentItem({ item, open, painting, onToggle, onBrush, onDelete, edit }) {
+  const { mcAssets } = useCrate();
   const path = (...rest) => ['Content', item.id, ...rest];
   const setOptional = (key, value) => (value === '' ? edit.del(path('Item', key)) : edit.set(path('Item', key), value));
   const types = ITEM_TYPES.includes(item.type) ? ITEM_TYPES : [item.type, ...ITEM_TYPES];
@@ -385,8 +570,8 @@ function ContentItem({ item, open, painting, onToggle, onBrush, onDelete, edit }
       <div className="flex items-center gap-2 px-3 py-2">
         <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-ink-500" />}
-          <span className="relative flex h-7 w-7 shrink-0 items-center justify-center" style={SLOT}>
-            <ItemIcon visual={itemVisual(item.material)} glint={item.glint} />
+          <span className="relative flex h-8 w-8 shrink-0 items-center justify-center" style={SLOT}>
+            <SlotItem cell={{ material: item.material, skin: item.skinUrl, glint: item.glint }} assets={mcAssets} size={24} />
           </span>
           <span className="truncate text-xs font-mono text-parch-200">{item.id}</span>
           <span className="shrink-0 text-[10px] text-ink-500">

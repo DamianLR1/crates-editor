@@ -11,8 +11,10 @@ import { convertCrate, convertKey } from './convert661.js';
 import { computePercentages } from './weightMath.js';
 import {
   readPreview, layoutSlots, parseSlots, formatSlots, toggleSlot, menuShape, applyEmptyLines, fillText,
-  renderRewardLore, rewardVars, rewardLimit,
+  renderRewardLore, rewardVars, rewardLimit, rewardItem, skinFromTag,
 } from './previewMenu.js';
+import { readZip, resolveItem } from './mcAssets.js';
+import { deflateRawSync } from 'node:zlib';
 
 // Líneas de `b` que no están en la misma posición en `a`
 const changedLines = (a, b) => b.split('\n').filter((line, i) => line !== a.split('\n')[i]);
@@ -310,6 +312,69 @@ assert.deepEqual(renderRewardLore(pv.reward.lore, sample, rewardVars(sample, {},
 out = editCrateText(PREVIEW, (d) => setField(d, ['Content', 'cerrar', 'Slots'], formatSlots(toggleSlot(pv.content[1].slots, 22))));
 assert.deepEqual(changedLines(PREVIEW, out), ["    Slots: '1,22'"], 'conserva las comillas del valor original');
 assert.ok(out.startsWith('# comentario de cabecera\n') && out.includes('Hide_Unavailable: true # comentario'));
+
+// ---------- Assets de Minecraft ----------
+
+// .zip mínimo: una entrada guardada y otra comprimida (deflate), como un .jar
+function zipOf(entries) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, data, deflate] of entries) {
+    const body = deflate ? deflateRawSync(data) : data;
+    const nameBytes = Buffer.from(name);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(deflate ? 8 : 0, 8);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBytes.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(deflate ? 8 : 0, 10);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBytes.length, 28);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, nameBytes, body);
+    centrals.push(central, nameBytes);
+    offset += 30 + nameBytes.length + body.length;
+  }
+  const directory = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(directory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  const all = Buffer.concat([...locals, directory, end]);
+  return all.buffer.slice(all.byteOffset, all.byteOffset + all.length);
+}
+const zipped = await readZip(zipOf([['a.txt', Buffer.from('hola'), false], ['b/c.json', Buffer.from('{"x":1}'), true]]));
+assert.equal(new TextDecoder().decode(zipped.get('a.txt')), 'hola');
+assert.equal(new TextDecoder().decode(zipped.get('b/c.json')), '{"x":1}');
+
+// Modelos: bloque cúbico (items/ de 1.21.4+), ítem plano (models/item/) y sin textura
+const MODELS = {
+  'items/gold_block.json': { model: { type: 'minecraft:model', model: 'minecraft:block/gold_block' } },
+  'models/block/gold_block.json': { parent: 'minecraft:block/cube_all', textures: { all: 'minecraft:block/gold_block' } },
+  'models/block/cube_all.json': { parent: 'block/cube', textures: { up: '#all', east: '#all', north: '#all' } },
+  'models/block/cube.json': { parent: 'block/block' },
+  'models/item/arrow.json': { parent: 'item/generated', textures: { layer0: 'minecraft:item/arrow' } },
+};
+const fakeAssets = { json: (path) => MODELS[path] ?? null, texture: (ref) => String(ref).replace(/^minecraft:/, '') };
+assert.deepEqual(resolveItem(fakeAssets, 'gold_block'), { kind: 'cube', top: 'block/gold_block', left: 'block/gold_block', right: 'block/gold_block' });
+assert.deepEqual(resolveItem(fakeAssets, 'arrow'), { kind: 'flat', src: 'item/arrow', overlay: null });
+assert.deepEqual(resolveItem(fakeAssets, 'player_head'), { kind: 'head' });
+assert.equal(resolveItem({ json: () => null, texture: () => null }, 'chest'), null);
+
+// Skin de una cabeza desde el componente minecraft:profile del SNBT
+const skin = Buffer.from(JSON.stringify({ textures: { SKIN: { url: 'http://textures.minecraft.net/texture/abc123' } } })).toString('base64');
+assert.equal(skinFromTag(`{components:{"minecraft:profile":{properties:[{name:"textures",value:"${skin}"}]}},count:1,id:"minecraft:player_head"}`), 'abc123');
+assert.deepEqual(
+  rewardItem({ type: 'COMMAND', previewData: { type: 'VANILLA', tagValue: '{components:{"minecraft:enchantment_glint_override":1b},count:3,id:"minecraft:diamond"}' } }),
+  { material: 'minecraft:diamond', amount: 3, skin: null, glint: true },
+);
 
 // ---------- Crates reales (opcional) ----------
 

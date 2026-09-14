@@ -172,12 +172,30 @@ export function applyEmptyLines(lore) {
   return out;
 }
 
-/** Material del ítem con el que se muestra el reward en el menú. */
-export function rewardMaterial(reward) {
+/** Ítem con el que se muestra el reward en el menú: material, cantidad, skin (cabezas) y brillo. */
+export function rewardItem(reward) {
   const item = reward.type === 'ITEM' && !reward.customPreview ? reward.itemsData[0] : reward.previewData;
-  if (!item) return 'minecraft:paper';
-  if (item.type === 'CUSTOM') return 'custom';
-  return [...String(item.tagValue ?? '').matchAll(/\bid:"([^"]+)"/g)].at(-1)?.[1] ?? 'minecraft:paper';
+  if (!item) return { material: 'minecraft:paper' };
+  if (item.type === 'CUSTOM') return { material: 'custom', amount: Number(item.amount) || 1 };
+  const tag = String(item.tagValue ?? '');
+  const last = (re) => [...tag.matchAll(re)].at(-1)?.[1]; // id y count de nivel superior van al final del SNBT
+  return {
+    material: last(/\bid:"([^"]+)"/g) ?? 'minecraft:paper',
+    amount: Number(last(/\bcount:(\d+)/g) ?? 1),
+    skin: skinFromTag(tag),
+    glint: /enchantment_glint_override":(?:1b|true)|"minecraft:enchantments":\{(?:levels:)?\{[^}]/.test(tag),
+  };
+}
+
+/** Hash de la skin de una cabeza a partir del componente minecraft:profile del SNBT. */
+export function skinFromTag(tag) {
+  const encoded = String(tag ?? '').match(/name:"textures",value:"([A-Za-z0-9+/=]+)"/)?.[1];
+  if (!encoded) return null;
+  try {
+    return JSON.parse(atob(encoded)).textures?.SKIN?.url?.split('/').pop() ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export const prettyMaterial = (material) => String(material).replace(/^minecraft:/i, '').toLowerCase()

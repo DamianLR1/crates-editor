@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   loadCrateFile,
   editCrateText,
@@ -19,6 +19,7 @@ import { convertCrate } from '../lib/convert661.js';
 import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
 import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
 import { readServerFolder, inspectCrate } from '../lib/serverContext.js';
+import { loadCachedAssets, extractAssets, createAssets, saveAssets, clearCachedAssets, loadFont } from '../lib/mcAssets.js';
 
 const RARITY_WEIGHTS_STORAGE_KEY = 'crateforge.rarityWeights';
 
@@ -93,6 +94,53 @@ export function CrateProvider({ children }) {
   const [server, setServer] = useState(null); // carpeta plugins/ExcellentCrates abierta
   const [preview, setPreview] = useState(null); // menú de preview abierto: { name, text }
   const [previewHistory, setPreviewHistory] = useState([]);
+
+  // Texturas y fuente de Minecraft del .jar del usuario (ver mcAssets.js)
+  const [mcAssets, setMcAssets] = useState(null);
+  const [mcFont, setMcFont] = useState(null);
+  const [mcStatus, setMcStatus] = useState(null); // 'loading' | mensaje de error
+  const assetsRef = useRef(null);
+  const applyAssets = useCallback((next) => {
+    assetsRef.current?.dispose();
+    assetsRef.current = next;
+    setMcAssets(next);
+  }, []);
+
+  useEffect(() => {
+    loadCachedAssets().then((cached) => cached && applyAssets(cached));
+  }, [applyAssets]);
+
+  useEffect(() => {
+    setMcFont(null);
+    if (mcAssets) loadFont(mcAssets).then(setMcFont).catch(() => setMcFont(null));
+  }, [mcAssets]);
+
+  /** add: suma los archivos a lo ya cargado (p. ej. la unifont después del .jar) en vez de reemplazarlo. */
+  const loadMcAssets = useCallback(async (fileList, add = false) => {
+    const picked = [...(fileList ?? [])]; // copia: el input se vacía apenas se eligen los archivos
+    if (!picked.length) return;
+    setMcStatus('loading');
+    try {
+      const current = add ? assetsRef.current : null;
+      const files = new Map(current?.files ?? []);
+      for (const [path, data] of await extractAssets(picked)) files.set(path, data);
+      if (![...files.keys()].some((k) => k.startsWith('textures/'))) {
+        throw new Error('No encontré texturas de Minecraft. Elegí el .jar del cliente (.minecraft/versions/<versión>/<versión>.jar) o un resource pack .zip.');
+      }
+      const names = picked.map((f) => (/^[0-9a-f]{40}$/.test(f.name) ? 'unifont' : f.name)); // los objetos del juego tienen nombre hash
+      const label = [current?.label, ...names].filter(Boolean).join(' + ');
+      await saveAssets(files, label).catch(() => {}); // sin IndexedDB igual sirven en esta sesión
+      applyAssets(createAssets(files, label));
+      setMcStatus(null);
+    } catch (e) {
+      setMcStatus(e.message || String(e));
+    }
+  }, [applyAssets]);
+
+  const clearMcAssets = useCallback(() => {
+    clearCachedAssets().catch(() => {});
+    applyAssets(null);
+  }, [applyAssets]);
 
   // Rewards.Rarities vive en el config.yml GLOBAL: se carga de la carpeta del
   // server o se configura a mano (persistido localmente).
@@ -170,6 +218,18 @@ export function CrateProvider({ children }) {
     setServer({ ...server, crates });
     open(name, crates[name]);
   }, [server, currentCrates, open]);
+
+  // Volver a la pantalla de inicio. Con la carpeta abierta lo editado queda guardado en ella.
+  const goHome = useCallback(() => {
+    if (!server && history.length > 0 && !window.confirm('Esta caja tiene cambios que quizás no exportaste. ¿Volver al inicio igual?')) return;
+    if (server) setServer({ ...server, crates: currentCrates() });
+    setText(null);
+    setFileName(null);
+    setHistory([]);
+    setConversionWarnings(null);
+    setPreview(null);
+    setError(null);
+  }, [server, history, currentCrates]);
 
   const edit = useCallback((fn) => {
     if (text == null) return;
@@ -279,6 +339,12 @@ export function CrateProvider({ children }) {
     removeReward: (key) => edit((d) => deleteReward(d, key)),
     renameRewardKey: (oldKey, newKey) => edit((d) => renameReward(d, oldKey, newKey)),
     exportYaml: () => text ?? '',
+    goHome,
+    mcAssets,
+    mcFont,
+    mcStatus,
+    loadMcAssets,
+    clearMcAssets,
     preview,
     openPreview,
     closePreview: () => setPreview(null),

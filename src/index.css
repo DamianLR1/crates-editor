@@ -49,3 +49,16 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: var(--color-ink-500); }
 
 .font-mono-tab { font-variant-numeric: tabular-nums; }
+
+/* Brillo de encantamiento (textura misc/enchanted_glint_item del juego) */
+.mc-glint {
+  mix-blend-mode: screen;
+  opacity: 0.8;
+  background-size: 64px 64px;
+  image-rendering: pixelated;
+  animation: mc-glint 8s linear infinite;
+}
+@keyframes mc-glint {
+  from { background-position: 0 0; }
+  to { background-position: 128px 64px; }
+}

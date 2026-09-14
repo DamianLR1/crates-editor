@@ -126,7 +126,7 @@ function Workspace() {
   const cells = layout.slots.map((item, slot) => {
     const reward = rewardAt.get(slot);
     if (reward) return rewardItem(reward);
-    return item && { material: item.material, skin: item.skinUrl, glint: item.glint, amount: item.amount, dim: isHidden(item) };
+    return item && { material: item.material, cmd: item.modelData, skin: item.skinUrl, glint: item.glint, amount: item.amount, dim: isHidden(item) };
   });
 
   const clickSlot = (slot) => {
@@ -506,7 +506,7 @@ function SlotItem({ cell, assets = null, font = null, size, scale = 2 }) {
   return (
     <span className="relative block" style={{ width: size, height: size }}>
       {assets
-        ? <McItem assets={assets} material={cell.material} skin={cell.skin} glint={cell.glint} dim={cell.dim} size={size} fallback={fallback} />
+        ? <McItem assets={assets} material={cell.material} cmd={cell.cmd} itemModel={cell.itemModel} skin={cell.skin} glint={cell.glint} dim={cell.dim} size={size} fallback={fallback} />
         : fallback}
       {cell.amount > 1 && (
         font ? (
@@ -571,7 +571,7 @@ function ContentItem({ item, open, painting, onToggle, onBrush, onDelete, edit }
         <button onClick={onToggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
           {open ? <ChevronDown className="w-3.5 h-3.5 shrink-0 text-ink-500" /> : <ChevronRight className="w-3.5 h-3.5 shrink-0 text-ink-500" />}
           <span className="relative flex h-8 w-8 shrink-0 items-center justify-center" style={SLOT}>
-            <SlotItem cell={{ material: item.material, skin: item.skinUrl, glint: item.glint }} assets={mcAssets} size={24} />
+            <SlotItem cell={{ material: item.material, cmd: item.modelData, skin: item.skinUrl, glint: item.glint }} assets={mcAssets} size={24} />
           </span>
           <span className="truncate text-xs font-mono text-parch-200">{item.id}</span>
           <span className="shrink-0 text-[10px] text-ink-500">

@@ -1,20 +1,29 @@
 // mcAssets.js
 // Texturas, modelos y fuente de Minecraft leídos del .jar del cliente del
-// usuario (o de resource packs .zip). Son assets de Mojang: no se incluyen en el
-// repo ni se publican; se leen en el navegador y se guardan en IndexedDB para no
-// pedir el archivo cada vez.
+// usuario y de resource packs .zip (el del server, con sus ítems custom). Son
+// assets de Mojang/del pack: no se incluyen en el repo ni se publican; se leen en
+// el navegador y se guardan en IndexedDB para no pedir el archivo cada vez.
 
 const PREFIX = 'assets/minecraft/';
-const KEEP = new RegExp(`^${PREFIX}(${[
-  'textures/(item|block|font)/[^/]+\\.png',
-  'models/(item|block)/[^/]+\\.json',
-  'items/[^/]+\\.json',
-  'font/include/(default|space)\\.json',
+// Del namespace minecraft sólo lo que usa el menú; de los demás (packs), todo lo de ítems y fuentes
+const KEEP = new RegExp(`^assets/(?:minecraft/(?:${[
+  'textures/(?:item|block|font)/.+\\.png',
+  'models/(?:item|block)/.+\\.json',
+  'items/.+\\.json',
+  'font/.+\\.json',
   'font/unifont[^/]*\\.zip',
   'textures/gui/container/generic_54\\.png',
   'textures/misc/enchanted_glint_item\\.png',
   'textures/entity/player/wide/steve\\.png',
-].join('|')})$`);
+].join('|')})|(?!minecraft/)[^/]+/(?:textures/.+\\.png|models/.+\\.json|items/.+\\.json|font/.+\\.json))$`);
+
+/** Ruta interna de un recurso "ns:path" (minecraft sin prefijo, como estaba en caché). */
+export function refPath(ref, dir, ext) {
+  const s = String(ref);
+  const colon = s.indexOf(':');
+  const ns = colon < 0 ? 'minecraft' : s.slice(0, colon);
+  return `${ns === 'minecraft' ? '' : `assets/${ns}/`}${dir}/${colon < 0 ? s : s.slice(colon + 1)}${ext}`;
+}
 
 /**
  * Lector de .zip/.jar mínimo: directorio central + DecompressionStream
@@ -53,15 +62,18 @@ async function inflate(raw) {
 }
 
 /**
- * Lee el .jar, resource packs (después: pisan las texturas del jar) y el
- * unifont.zip del juego (.minecraft/assets/objects/..., un .hex en la raíz).
+ * Lee el .jar, resource packs (después: pisan lo del jar) y el unifont.zip del
+ * juego (.minecraft/assets/objects/..., un .hex en la raíz).
+ * ponytail: no aplica los overlays del pack (carpetas por versión); los packs de hoy los usan para shaders.
  */
 export async function extractAssets(fileList) {
   const files = [...fileList].sort((a, b) => Number(!/\.jar$/i.test(a.name)) - Number(!/\.jar$/i.test(b.name)));
   const merged = new Map();
   for (const file of files) {
     const entries = await readZip(await file.arrayBuffer(), (n) => KEEP.test(n) || /^[^/]+\.hex$/.test(n));
-    for (const [name, data] of entries) merged.set(name.startsWith(PREFIX) ? name.slice(PREFIX.length) : `font/${name}`, data);
+    for (const [name, data] of entries) {
+      merged.set(name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name.startsWith('assets/') ? name : `font/${name}`, data);
+    }
   }
   // en algunas versiones unifont viene como un .zip adentro del .jar: se guarda ya descomprimido
   for (const [name, data] of merged) {
@@ -126,7 +138,7 @@ export function createAssets(files, label = '') {
     }
     return jsons.get(path);
   };
-  const texture = (ref) => url(`textures/${String(ref).replace(/^minecraft:/, '')}.png`);
+  const texture = (ref) => url(refPath(ref, 'textures', '.png'));
 
   return {
     label,
@@ -137,54 +149,155 @@ export function createAssets(files, label = '') {
     gui: url('textures/gui/container/generic_54.png'),
     glint: url('textures/misc/enchanted_glint_item.png'),
     steve: url('textures/entity/player/wide/steve.png'),
-    item(material) {
+    /** extra: { cmd, itemModel } del SNBT, para los ítems custom del resource pack */
+    item(material, extra = {}) {
       const id = String(material ?? '').toLowerCase().replace(/^minecraft:/, '');
-      if (!items.has(id)) items.set(id, resolveItem({ json, texture }, id));
-      return items.get(id);
+      const key = `${id}|${extra.cmd ?? ''}|${extra.itemModel ?? ''}`;
+      if (!items.has(key)) items.set(key, resolveItem({ json, texture }, id, extra));
+      return items.get(key);
     },
     dispose: () => urls.forEach((u) => URL.revokeObjectURL(u)),
   };
 }
 
+const HEAD = { kind: 'head' };
+const NOTHING = { kind: 'model', faces: [] };
+
+/**
+ * Elige el modelo de una definición items/<id>.json (1.21.4+). Sólo evalúa lo que
+ * cambia la textura en un menú: custom_model_data (range_dispatch); de las demás
+ * propiedades (select, condition...) usa el caso por defecto.
+ */
+function pickModel(node, cmd) {
+  for (let depth = 0; node && depth < 20; depth++) {
+    const type = String(node.type ?? '').replace(/^minecraft:/, '');
+    if (type === 'model') return node.model;
+    if (type === 'empty') return NOTHING;
+    if (type === 'special') return String(node.model?.type).replace(/^minecraft:/, '') === 'head' && (node.model.kind ?? 'player') === 'player' ? HEAD : null;
+    if (type === 'range_dispatch') {
+      const byCmd = String(node.property).replace(/^minecraft:/, '') === 'custom_model_data' && cmd != null;
+      const hit = byCmd ? (node.entries ?? []).filter((e) => e.threshold <= cmd).sort((a, b) => a.threshold - b.threshold).pop() : null;
+      node = hit?.model ?? node.fallback;
+    } else if (type === 'select') node = node.fallback ?? node.cases?.[0]?.model;
+    else if (type === 'condition') node = node.on_false;
+    else if (type === 'composite') node = node.models?.[0];
+    else return null;
+  }
+  return null;
+}
+
 /**
  * Cómo se dibuja un ítem en el inventario, siguiendo los modelos del juego:
  *  - { kind: 'flat', src, overlay }  ítems con layer0 (paneles, flechas, puertas...)
- *  - { kind: 'cube', top, left, right }  bloques cúbicos, en isométrico
+ *  - { kind: 'model', faces }  modelos con elements (bloques, ítems 3D de packs) ya proyectados
  *  - { kind: 'head' }  cabeza de jugador (textura de la skin)
  *  - null  sin textura (cofres y demás modelos especiales): la UI usa un ícono genérico
  */
-export function resolveItem({ json, texture }, id) {
-  if (id === 'player_head') return { kind: 'head' };
+export function resolveItem({ json, texture }, id, { cmd = null, itemModel = null } = {}) {
+  if (id === 'player_head' && cmd == null && !itemModel) return HEAD;
 
-  // 1.21.4+: items/<id>.json apunta al modelo; antes, models/item/<id>.json
-  let model = json(`models/item/${id}.json`) ? `item/${id}` : null;
-  const definition = json(`items/${id}.json`);
-  if (definition) model = JSON.stringify(definition).match(/"model":"(?:minecraft:)?([^"]+)"/)?.[1] ?? model;
+  // 1.21.4+: items/<id>.json (o el del componente item_model) elige el modelo; antes, models/item/<id>.json
+  const definition = json(refPath(itemModel ?? id, 'items', '.json'));
+  const model = definition ? pickModel(definition.model, cmd) : json(`models/item/${id}.json`) && `item/${id}`;
+  if (model && typeof model === 'object') return model;
   if (!model) {
     const flat = texture(`item/${id}`) ?? texture(`block/${id}`);
     return flat ? { kind: 'flat', src: flat } : null;
   }
 
   const textures = {};
-  const chain = [];
-  for (let path = model, depth = 0; path && depth < 10; depth++) {
-    const m = json(`models/${path}.json`);
+  let elements = null;
+  let gui = null;
+  let light = null;
+  for (let ref = model, depth = 0; ref && depth < 10; depth++) {
+    const m = json(refPath(ref, 'models', '.json'));
     if (!m) break;
-    chain.push(path);
     for (const [key, value] of Object.entries(m.textures ?? {})) if (!(key in textures)) textures[key] = value;
-    path = m.parent?.replace(/^minecraft:/, '');
+    elements ??= m.elements ?? null;
+    gui ??= m.display?.gui ?? null;
+    light ??= m.gui_light ?? null;
+    ref = m.parent;
   }
-  const tex = (name, depth = 0) => {
-    const value = textures[name];
-    if (typeof value !== 'string') return null;
-    return value.startsWith('#') ? (depth < 6 ? tex(value.slice(1), depth + 1) : null) : texture(value);
+  const tex = (ref, depth = 0) => {
+    if (typeof ref !== 'string') return null;
+    if (!ref.startsWith('#')) return texture(ref);
+    return depth < 6 ? tex(textures[ref.slice(1)], depth + 1) : null;
   };
 
-  if (textures.layer0) return { kind: 'flat', src: tex('layer0'), overlay: tex('layer1') };
-  // En la GUI un bloque se ve rotado 225°: arriba, el este a la izquierda y el norte a la derecha
-  if (chain.includes('block/cube')) return { kind: 'cube', top: tex('up'), left: tex('east'), right: tex('north') };
-  const flat = ['all', 'side', 'texture', 'cross', 'plant', 'front', 'top'].map((k) => tex(k)).find(Boolean);
+  if (elements) return { kind: 'model', faces: projectModel(elements, gui, light, tex) };
+  if (textures.layer0) return { kind: 'flat', src: tex('#layer0'), overlay: tex('#layer1') };
+  const flat = ['all', 'side', 'texture', 'cross', 'plant', 'front', 'top'].map((k) => tex(`#${k}`)).find(Boolean);
   return flat ? { kind: 'flat', src: flat } : null;
+}
+
+// Por cara: esquina de arriba a la izquierda de la textura, eje u y eje v (con su largo) y uv por defecto
+const FACE_GEOMETRY = {
+  north: (f, t) => [[t[0], t[1], f[2]], [f[0] - t[0], 0, 0], [0, f[1] - t[1], 0], [16 - t[0], 16 - t[1], 16 - f[0], 16 - f[1]]],
+  south: (f, t) => [[f[0], t[1], t[2]], [t[0] - f[0], 0, 0], [0, f[1] - t[1], 0], [f[0], 16 - t[1], t[0], 16 - f[1]]],
+  west: (f, t) => [[f[0], t[1], f[2]], [0, 0, t[2] - f[2]], [0, f[1] - t[1], 0], [f[2], 16 - t[1], t[2], 16 - f[1]]],
+  east: (f, t) => [[t[0], t[1], t[2]], [0, 0, f[2] - t[2]], [0, f[1] - t[1], 0], [16 - t[2], 16 - t[1], 16 - f[2], 16 - f[1]]],
+  up: (f, t) => [[f[0], t[1], f[2]], [t[0] - f[0], 0, 0], [0, 0, t[2] - f[2]], [f[0], f[2], t[0], t[2]]],
+  down: (f, t) => [[f[0], f[1], t[2]], [t[0] - f[0], 0, 0], [0, 0, f[2] - t[2]], [f[0], 16 - t[2], t[0], 16 - f[2]]],
+};
+
+function rotate([x, y, z], axis, degrees) {
+  const c = Math.cos((degrees * Math.PI) / 180);
+  const s = Math.sin((degrees * Math.PI) / 180);
+  if (axis === 'x') return [x, y * c - z * s, y * s + z * c];
+  if (axis === 'y') return [x * c + z * s, y, -x * s + z * c];
+  return [x * c - y * s, x * s + y * c, z];
+}
+
+const add = (a, b) => a.map((v, i) => v + b[i]);
+const sub = (a, b) => a.map((v, i) => v - b[i]);
+const r4 = (n) => Math.round(n * 1e4) / 1e4 + 0;
+
+/**
+ * Proyección ortográfica de las caras de un modelo como en el inventario: rotación de
+ * cada element, display.gui (translate · rotate XYZ · scale, como ItemTransform) y
+ * pintor de atrás hacia adelante. Cada cara es un paralelogramo: la textura se lleva
+ * con una transformación afín (p0 + u·pu + v·pv). La luz imita la de los ítems 3D.
+ * ponytail: ignora la rotación de uv por cara y la intersección de caras (orden por profundidad media).
+ */
+function projectModel(elements, gui, light, tex) {
+  const [rx, ry, rz] = gui?.rotation ?? [0, 0, 0];
+  const [tx, ty, tz] = gui?.translation ?? [0, 0, 0];
+  const [sx, sy, sz] = gui?.scale ?? [1, 1, 1];
+  const faces = [];
+  for (const element of elements) {
+    const { from, to, rotation: er } = element;
+    if (!from || !to) continue;
+    const view = (p) => {
+      let v = er ? add(rotate(sub(p, er.origin ?? [8, 8, 8]), er.axis, er.angle ?? 0), er.origin ?? [8, 8, 8]) : p;
+      v = [(v[0] - 8) * sx, (v[1] - 8) * sy, (v[2] - 8) * sz];
+      v = rotate(rotate(rotate(v, 'z', rz), 'y', ry), 'x', rx);
+      return add(v, [tx, ty, tz]);
+    };
+    for (const [dir, face] of Object.entries(element.faces ?? {})) {
+      if (!FACE_GEOMETRY[dir]) continue;
+      const [origin, u, v, defaultUv] = FACE_GEOMETRY[dir](from, to);
+      const uv = face.uv ?? defaultUv;
+      const src = tex(face.texture);
+      if (!src || uv[2] === uv[0] || uv[3] === uv[1]) continue;
+      const o = view(origin);
+      const pu = sub(view(add(origin, u)), o);
+      const pv = sub(view(add(origin, v)), o);
+      const n = [pv[1] * pu[2] - pv[2] * pu[1], pv[2] * pu[0] - pv[0] * pu[2], pv[0] * pu[1] - pv[1] * pu[0]];
+      const len = Math.hypot(...n);
+      if (!len || n[2] / len < 1e-6) continue; // de canto o de espaldas
+      const [nx, ny, nz] = n.map((c) => c / len);
+      faces.push({
+        src,
+        uv,
+        p0: [r4(8 + o[0]), r4(8 - o[1])],
+        pu: [r4(pu[0]), r4(-pu[1])],
+        pv: [r4(pv[0]), r4(-pv[1])],
+        b: light === 'front' ? 1 : r4(Math.min(1, 0.6 + 0.4 * Math.max(0, ny) + 0.3 * Math.max(0, nz) - 0.1 * nx)),
+        depth: o[2] + (pu[2] + pv[2]) / 2,
+      });
+    }
+  }
+  return faces.sort((a, b) => a.depth - b.depth).map(({ depth, ...face }) => face);
 }
 
 /** Hash de textura de una skin a partir de SkinURL (hash o URL completa). */
@@ -193,21 +306,39 @@ export const skinHash = (value) => (value ? String(value).split('/').pop() : nul
 // ---- Fuente (sólo navegador: necesita canvas para medir los glifos) ----
 
 /**
- * Fuente default del juego: providers bitmap de font/include/default.json,
- * espacios de space.json y, para lo demás (p. ej. versalitas ᴄᴀᴊᴀ), unifont.
- * Cada glifo: { advance, draw(ctx, x, y, scale) } en píxeles de fuente.
+ * Fuente default: font/default.json (con los glifos propios del resource pack) y la
+ * base del juego (bitmaps de include/default, espacios de include/space) y, para lo
+ * demás (p. ej. versalitas ᴄᴀᴊᴀ), unifont. Cada glifo: { advance, sheet | unihex }.
  */
 export async function loadFont(assets) {
-  const def = assets.json('font/include/default.json');
-  if (!def || typeof document === 'undefined') return null;
-  const spaces = assets.json('font/include/space.json')?.providers?.find((p) => p.type === 'space')?.advances ?? { ' ': 4 };
-  const glyphs = new Map();
+  const providers = [];
+  const seen = new Set();
+  const include = (id) => {
+    const path = refPath(id, 'font', '.json');
+    if (seen.has(path)) return;
+    seen.add(path);
+    for (const p of assets.json(path)?.providers ?? []) {
+      if (String(p.type).replace(/^minecraft:/, '') === 'reference') include(p.id);
+      else providers.push(p);
+    }
+  };
+  // el default.json del jar ya incluye la base, pero el de un pack lo pisa al mezclar archivos
+  ['default', 'include/space', 'include/default'].forEach(include);
+  const bitmaps = providers.filter((p) => p.type === 'bitmap' && p.file && p.chars);
+  if (!bitmaps.length || typeof document === 'undefined') return null;
 
-  for (const provider of def.providers ?? []) {
-    if (provider.type !== 'bitmap') continue;
-    const src = assets.texture(provider.file.replace(/\.png$/, ''));
-    if (!src) continue;
-    const img = await loadImage(src);
+  const spaces = {};
+  for (const p of providers) if (p.type === 'space') for (const [ch, advance] of Object.entries(p.advances ?? {})) spaces[ch] ??= advance;
+  spaces[' '] ??= 4;
+
+  const images = await Promise.all(bitmaps.map((p) => {
+    const src = assets.texture(p.file.replace(/\.png$/, ''));
+    return src ? loadImage(src).catch(() => null) : null;
+  }));
+  const glyphs = new Map();
+  bitmaps.forEach((provider, index) => {
+    const img = images[index];
+    if (!img) return;
     const canvas = document.createElement('canvas');
     canvas.width = img.width;
     canvas.height = img.height;
@@ -233,7 +364,7 @@ export async function loadFont(assets) {
         sheet: { img, sx: rx * cellW, sy: ry * cellH, sw: cellW, sh: cellH, w: cellW * scale, h: cellH * scale, top },
       });
     }));
-  }
+  });
 
   // unifont (lo que no está en los bitmaps: versalitas ᴄᴀᴊᴀ, flechas, emojis...): líneas
   // "XXXX:bits" de 16 filas; se arman recién cuando se usan (son ~57 mil glifos)

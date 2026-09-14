@@ -82,6 +82,8 @@ export function readPreview(text) {
         hideTooltip: item('Hide_Tooltip', false) === true,
         glint: item('Enchant_Glint', false) === true,
         skinUrl: item('SkinURL') ?? null,
+        // Model.Data en nightcore nuevo, Custom_Model_Data en el viejo: el modelo del resource pack
+        modelData: Number(get(['Content', id, 'Item', 'Model', 'Data'], item('Custom_Model_Data'))) || null,
         hasClickCommands: doc.hasIn(['Content', id, 'Click_Commands']),
       };
     }),
@@ -179,11 +181,15 @@ export function rewardItem(reward) {
   if (item.type === 'CUSTOM') return { material: 'custom', amount: Number(item.amount) || 1 };
   const tag = String(item.tagValue ?? '');
   const last = (re) => [...tag.matchAll(re)].at(-1)?.[1]; // id y count de nivel superior van al final del SNBT
+  // custom_model_data: {floats:[N]} desde 1.21.4, un entero antes; con item_model eligen el modelo del resource pack
+  const cmd = tag.match(/"minecraft:custom_model_data":(?:\{[^}]*?floats:\[)?(-?\d+(?:\.\d+)?)/)?.[1];
   return {
     material: last(/\bid:"([^"]+)"/g) ?? 'minecraft:paper',
     amount: Number(last(/\bcount:(\d+)/g) ?? 1),
     skin: skinFromTag(tag),
     glint: /enchantment_glint_override":(?:1b|true)|"minecraft:enchantments":\{(?:levels:)?\{[^}]/.test(tag),
+    cmd: cmd == null ? null : Number(cmd),
+    itemModel: tag.match(/"minecraft:item_model":"([^"]+)"/)?.[1] ?? null,
   };
 }
 

@@ -13,7 +13,8 @@ import {
   readPreview, layoutSlots, parseSlots, formatSlots, toggleSlot, menuShape, applyEmptyLines, fillText,
   renderRewardLore, rewardVars, rewardLimit, rewardItem, skinFromTag,
 } from './previewMenu.js';
-import { readZip, resolveItem } from './mcAssets.js';
+import { readZip, resolveItem, refPath } from './mcAssets.js';
+import { parseMcText, parseMcTextWithGradients, stripMcCodes } from './mcText.js';
 import { deflateRawSync } from 'node:zlib';
 
 // Líneas de `b` que no están en la misma posición en `a`
@@ -297,6 +298,8 @@ Content:
     Priority: 10
     Item:
       Material: minecraft:iron_door
+      Model:
+        Data: 1036
     Slots: '1'
     Type: close
 `;
@@ -306,6 +309,7 @@ const grid = layoutSlots(pv);
 assert.equal(grid.size, 27);
 assert.equal(grid.slots[1].id, 'cerrar', 'gana la prioridad más alta');
 assert.equal(grid.slots[0].id, 'fondo');
+assert.deepEqual(pv.content.map((c) => c.modelData), [null, 1036]);
 const sample = { key: 'r', displayName: 'R', weight: 5, percent: 12.5, description: ['linea'], limits: { enabled: true, playerAmount: 3, globalAmount: -1 } };
 assert.deepEqual(renderRewardLore(pv.reward.lore, sample, rewardVars(sample, {}, 'Común'), pv.reward.limitInfo, rewardLimit(sample)), ['linea', '', 'Chance: 12.5%', 'Quedan 3']);
 // Pintar un slot toca una línea y conserva los comentarios
@@ -354,27 +358,66 @@ const zipped = await readZip(zipOf([['a.txt', Buffer.from('hola'), false], ['b/c
 assert.equal(new TextDecoder().decode(zipped.get('a.txt')), 'hola');
 assert.equal(new TextDecoder().decode(zipped.get('b/c.json')), '{"x":1}');
 
-// Modelos: bloque cúbico (items/ de 1.21.4+), ítem plano (models/item/) y sin textura
+assert.equal(refPath('minecraft:item/paper', 'textures', '.png'), 'textures/item/paper.png');
+assert.equal(refPath('pack:a/b', 'models', '.json'), 'assets/pack/models/a/b.json');
+
+// Modelos: bloque (items/ de 1.21.4+), ítem plano (models/item/), sin textura y los del resource pack
+const CUBE_FACES = Object.fromEntries(['up', 'down', 'north', 'south', 'east', 'west'].map((f) => [f, { texture: `#${f}` }]));
 const MODELS = {
   'items/gold_block.json': { model: { type: 'minecraft:model', model: 'minecraft:block/gold_block' } },
   'models/block/gold_block.json': { parent: 'minecraft:block/cube_all', textures: { all: 'minecraft:block/gold_block' } },
-  'models/block/cube_all.json': { parent: 'block/cube', textures: { up: '#all', east: '#all', north: '#all' } },
-  'models/block/cube.json': { parent: 'block/block' },
+  'models/block/cube_all.json': { parent: 'block/cube', textures: { up: '#all', east: '#all', north: '#all', south: '#all' } },
+  'models/block/cube.json': { parent: 'block/block', elements: [{ from: [0, 0, 0], to: [16, 16, 16], faces: CUBE_FACES }] },
+  'models/block/block.json': { display: { gui: { rotation: [30, 225, 0], translation: [0, 0, 0], scale: [0.625, 0.625, 0.625] } } },
   'models/item/arrow.json': { parent: 'item/generated', textures: { layer0: 'minecraft:item/arrow' } },
+  'items/paper.json': {
+    model: {
+      type: 'minecraft:range_dispatch',
+      property: 'minecraft:custom_model_data',
+      entries: [{ threshold: 10, model: { type: 'model', model: 'pack:coin' } }, { threshold: 20, model: { type: 'model', model: 'pack:gem' } }],
+      fallback: { type: 'model', model: 'item/paper' },
+    },
+  },
+  'models/item/paper.json': { parent: 'item/generated', textures: { layer0: 'item/paper' } },
+  'assets/pack/models/coin.json': { textures: { layer0: 'pack:coin' } },
+  'assets/pack/models/gem.json': { textures: { 0: 'pack:gem' }, elements: [{ from: [0, 0, 8], to: [16, 16, 8], faces: { south: { uv: [0, 0, 16, 16], texture: '#0' } } }] },
+  'assets/pack/items/coin.json': { model: { type: 'model', model: 'pack:coin' } },
 };
 const fakeAssets = { json: (path) => MODELS[path] ?? null, texture: (ref) => String(ref).replace(/^minecraft:/, '') };
-assert.deepEqual(resolveItem(fakeAssets, 'gold_block'), { kind: 'cube', top: 'block/gold_block', left: 'block/gold_block', right: 'block/gold_block' });
+const block = resolveItem(fakeAssets, 'gold_block');
+assert.equal(block.kind, 'model');
+assert.equal(block.faces.length, 3, 'en el inventario se ven arriba y dos lados');
+assert.ok(block.faces.every((f) => f.src === 'block/gold_block'));
+assert.deepEqual(block.faces.map((f) => f.b).sort(), [0.713, 0.8544, 1], 'arriba con toda la luz, los lados más oscuros');
 assert.deepEqual(resolveItem(fakeAssets, 'arrow'), { kind: 'flat', src: 'item/arrow', overlay: null });
 assert.deepEqual(resolveItem(fakeAssets, 'player_head'), { kind: 'head' });
 assert.equal(resolveItem({ json: () => null, texture: () => null }, 'chest'), null);
+// custom_model_data: el mayor threshold <= valor; sin valor o por debajo, el fallback
+assert.deepEqual(resolveItem(fakeAssets, 'paper'), { kind: 'flat', src: 'item/paper', overlay: null });
+assert.deepEqual(resolveItem(fakeAssets, 'paper', { cmd: 5 }), { kind: 'flat', src: 'item/paper', overlay: null });
+assert.deepEqual(resolveItem(fakeAssets, 'paper', { cmd: 14 }), { kind: 'flat', src: 'pack:coin', overlay: null });
+assert.deepEqual(resolveItem(fakeAssets, 'paper', { itemModel: 'pack:coin' }), { kind: 'flat', src: 'pack:coin', overlay: null });
+// modelo 3D de un pack mirando al frente: ocupa el slot entero
+assert.deepEqual(resolveItem(fakeAssets, 'paper', { cmd: 25 }), { kind: 'model', faces: [{ src: 'pack:gem', uv: [0, 0, 16, 16], p0: [0, 0], pu: [16, 0], pv: [0, 16], b: 0.9 }] });
+
+// Texto como nightcore: hex de Bukkit, § igual que &, colores del esquema, gradientes
+const plain = (s) => parseMcText(s).map((r) => [r.text, r.color, r.bold]);
+assert.deepEqual(plain('§x§f§f§d§5§4§fT§lA'), [['T', '#FFD54F', false], ['A', '#FFD54F', true]]);
+assert.deepEqual(plain('&7a &l&eb'), [['a ', '#A1A1A1', false], ['b', '#E6E632', true]], 'un color legacy no corta la negrita');
+assert.deepEqual(plain('<#EFF13F>x</#EFF13F>y'), [['x', '#EFF13F', false], ['y', '#FFFFFF', false]]);
+assert.deepEqual(plain('#B196E5c <lyellow><b>d</b>e&rf'), [['c ', '#B196E5', false], ['d', '#FFEEA2', true], ['e', '#FFEEA2', false], ['f', '#FFFFFF', false]]);
+assert.deepEqual(parseMcTextWithGradients('<gradient:#000000:#FFFFFF>ab<b>c</b></gradient>').map((r) => r.color), ['#000000', '#808080', '#FFFFFF']);
+assert.equal(stripMcCodes('&f <#EFF13F>ᴄᴀᴊᴀ <shift:-8>&x'), ' ᴄᴀᴊᴀ &x');
 
 // Skin de una cabeza desde el componente minecraft:profile del SNBT
 const skin = Buffer.from(JSON.stringify({ textures: { SKIN: { url: 'http://textures.minecraft.net/texture/abc123' } } })).toString('base64');
 assert.equal(skinFromTag(`{components:{"minecraft:profile":{properties:[{name:"textures",value:"${skin}"}]}},count:1,id:"minecraft:player_head"}`), 'abc123');
 assert.deepEqual(
   rewardItem({ type: 'COMMAND', previewData: { type: 'VANILLA', tagValue: '{components:{"minecraft:enchantment_glint_override":1b},count:3,id:"minecraft:diamond"}' } }),
-  { material: 'minecraft:diamond', amount: 3, skin: null, glint: true },
+  { material: 'minecraft:diamond', amount: 3, skin: null, glint: true, cmd: null, itemModel: null },
 );
+const coin = rewardItem({ type: 'COMMAND', previewData: { type: 'VANILLA', tagValue: '{components:{"minecraft:custom_model_data":{floats:[14000.0f]},"minecraft:item_name":\'{"text":"Coin"}\'},count:1,id:"minecraft:paper"}' } });
+assert.deepEqual([coin.material, coin.cmd, coin.itemModel], ['minecraft:paper', 14000, null]);
 
 // ---------- Crates reales (opcional) ----------
 

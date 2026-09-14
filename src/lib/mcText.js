@@ -1,173 +1,112 @@
 // mcText.js
-// Convierte strings estilo Minecraft (legacy & codes, hex &#RRGGBB, y un subconjunto
-// de MiniMessage: <gradient:..>, <c:#hex>, <bold>, <yellow>, etc.) en un array de
-// "runs" { text, color, bold, italic, underline, strikethrough, obfuscated }
-// listo para renderizar como <span> con estilos.
+// Texto con formato como lo arma nightcore (TextRoot/TextParser): códigos legacy & y §
+// (incluido el hex de Bukkit §x§R§R§G§G§B§B), #RRGGBB y &#RRGGBB sueltos, y tags estilo
+// MiniMessage (<gradient:..>, <#hex>, <c:..>, <b>, <!i>, colores con nombre...).
+// Devuelve "runs" { text, color, bold, italic, underline, strike, obf } para dibujar.
 
-const LEGACY_COLORS = {
-  '0': '#000000', '1': '#0000AA', '2': '#00AA00', '3': '#00AAAA',
-  '4': '#AA0000', '5': '#AA00AA', '6': '#FFAA00', '7': '#AAAAAA',
-  '8': '#555555', '9': '#5555FF', a: '#55FF55', b: '#55FFFF',
-  c: '#FF5555', d: '#FF55FF', e: '#FFFF55', f: '#FFFFFF',
+// Esquema "custom" de nightcore (plugins/nightcore/color_schemes.yml, Selected: custom).
+// Los códigos legacy también pasan por acá: &7 es <gray> (#A1A1A1), no el gris vanilla.
+const SCHEME = {
+  black: '#000000', white: '#FFFFFF',
+  gray: '#A1A1A1', soft_gray: '#B4B4B4', dark_gray: '#6C6C62',
+  red: '#E63232', soft_red: '#E64B4B', dark_red: '#963232',
+  green: '#32E632', soft_green: '#78E650', dark_green: '#327832',
+  blue: '#3278E6', soft_blue: '#32AAE6', dark_blue: '#323296',
+  yellow: '#E6E632', soft_yellow: '#FAF0A0', dark_yellow: '#B4B432',
+  orange: '#E67832', soft_orange: '#E6AA32', gold: '#E6AA32',
+  aqua: '#32E6E6', soft_aqua: '#96E6E6', dark_aqua: '#327878',
+  purple: '#7832E6', soft_purple: '#965AE6', light_purple: '#E39FFF', dark_purple: '#4B3296',
+  pink: '#E63278', soft_pink: '#E65A96',
+  cyan: '#31EACE', dgray: '#6C6C62', lgray: '#D4D9D8', light_gray: '#D4D9D8',
+  lgreen: '#91F251', light_green: '#91F251', lyellow: '#FFEEA2', light_yellow: '#FFEEA2',
+  lorange: '#FDBA5E', light_orange: '#FDBA5E', lred: '#FD5E5E', light_red: '#FD5E5E',
+  lblue: '#5E9DFD', light_blue: '#5E9DFD', lcyan: '#5EDEFD', light_cyan: '#5EDEFD',
+  lpurple: '#E39FFF', lpink: '#FD8DDB', light_pink: '#FD8DDB',
 };
 
-const NAMED_MINIMESSAGE_COLORS = {
-  black: '#000000', dark_blue: '#0000AA', dark_green: '#00AA00',
-  dark_aqua: '#00AAAA', dark_red: '#AA0000', dark_purple: '#AA00AA',
-  gold: '#FFAA00', gray: '#AAAAAA', grey: '#AAAAAA',
-  dark_gray: '#555555', dark_grey: '#555555', blue: '#5555FF',
-  green: '#55FF55', aqua: '#55FFFF', red: '#FF5555',
-  light_purple: '#FF55FF', yellow: '#FFFF55', white: '#FFFFFF',
+// ParserUtils.legacyToNamedWrapper: cada código abre un tag (sin cerrar los anteriores,
+// así que &l&a queda en negrita y verde)
+const LEGACY = {
+  0: 'black', 1: 'dark_blue', 2: 'dark_green', 3: 'dark_aqua', 4: 'dark_red', 5: 'dark_purple', 6: 'gold', 7: 'gray',
+  8: 'dark_gray', 9: 'blue', a: 'green', b: 'aqua', c: 'red', d: 'light_purple', e: 'yellow', f: 'white',
+  k: 'obf', l: 'b', m: 'st', n: 'u', o: 'i', r: 'r',
 };
 
-/**
- * Parsea un string con formato mixto (legacy + MiniMessage) a runs de texto.
- * No pretende ser 100% completo (MiniMessage es enorme) pero cubre lo que
- * aparece típicamente en configs de ExcellentCrates: &-codes, hex legacy,
- * <gradient>, <c:#hex>, <bold>, colores nombrados, </tag> de cierre.
- */
+const DECORATIONS = {
+  b: 'bold', bold: 'bold', i: 'italic', italic: 'italic', em: 'italic', u: 'underline', underlined: 'underline',
+  st: 'strike', strikethrough: 'strike', obf: 'obf', obfuscated: 'obf',
+};
+
+const colorOf = (value) => {
+  const v = String(value ?? '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(v) ? v.toUpperCase() : SCHEME[v] ?? null;
+};
+
+/** Pasa todo a tags, en el mismo orden que nightcore (LegacyColors + wrapHexCodesAsTags). */
+const toTags = (str) => str
+  .replace(/§x((?:§[0-9a-f]){6})/gi, (_, hex) => `#${hex.replace(/§/g, '')}`)
+  .replace(/§([0-9a-fk-orx])/gi, (_, code) => `&${code.toLowerCase()}`)
+  .replace(/&#([0-9a-f]{6})/gi, '<#$1>')
+  .replace(/(?<![<:])#([0-9a-f]{6})(?!>)/gi, '<#$1>')
+  .replace(/&([0-9a-fk-or])/gi, (_, code) => `<${LEGACY[code.toLowerCase()]}>`);
+
 export function parseMcText(input, defaultColor = '#FFFFFF') {
   if (!input) return [];
-
-  let str = String(input);
-
+  const str = toTags(String(input));
+  const base = { color: defaultColor, bold: false, italic: false, underline: false, strike: false, obf: false };
   const runs = [];
-  const reset = { color: defaultColor, bold: false, italic: false, underline: false, strike: false, obf: false };
-  let state = reset;
   const stack = [];
+  let state = base;
+  let last = 0;
+  const push = (text) => text && runs.push({ text, ...state });
 
-  let i = 0;
-  let buffer = '';
+  for (const m of str.matchAll(/<(\/?)([^<>]+)>/g)) {
+    push(str.slice(last, m.index));
+    last = m.index + m[0].length;
+    const body = m[2];
+    const colon = body.indexOf(':');
+    const name = (colon < 0 ? body : body.slice(0, colon)).trim().toLowerCase();
+    const arg = colon < 0 ? '' : body.slice(colon + 1);
 
-  const flush = () => {
-    if (buffer.length > 0) {
-      runs.push({ text: buffer, ...state });
-      buffer = '';
-    }
-  };
-
-  while (i < str.length) {
-    const ch = str[i];
-
-    // #RRGGBB suelto: nightcore lo toma como color igual que &#RRGGBB
-    if (ch === '#' && /^[0-9a-fA-F]{6}/.test(str.slice(i + 1, i + 7))) {
-      flush();
-      state = { ...state, color: '#' + str.slice(i + 1, i + 7).toUpperCase() };
-      i += 7;
+    if (m[1]) { // cierre: vuelve al estado previo a su apertura
+      const at = stack.map((s) => s.name).lastIndexOf(name);
+      if (at >= 0) { state = stack[at].prev; stack.length = at; }
       continue;
     }
+    if (name === 'r' || name === 'reset') { state = base; stack.length = 0; continue; }
 
-    // Legacy & codes: &a, &l, &#RRGGBB
-    if (ch === '&' && str[i + 1] === '#' && /^[0-9a-fA-F]{6}/.test(str.slice(i + 2, i + 8))) {
-      flush();
-      state = { ...state, color: '#' + str.slice(i + 2, i + 8).toUpperCase() };
-      i += 8;
-      continue;
+    let next = null;
+    const negated = name.startsWith('!') && DECORATIONS[name.slice(1)];
+    if (DECORATIONS[name]) next = { ...state, [DECORATIONS[name]]: true };
+    else if (negated) next = { ...state, [negated]: false };
+    else if (name === 'gradient') {
+      const stops = arg.split(':').map(colorOf).filter(Boolean);
+      if (stops.length) next = { ...state, color: stops[0], _gradient: stops.length > 1 ? { stops } : undefined };
+    } else {
+      const color = colorOf(name.startsWith('#') ? name : ['c', 'color', 'colour'].includes(name) ? arg : name);
+      if (color) next = { ...state, color, _gradient: undefined };
     }
-    if (ch === '&' && /[0-9a-fk-orA-FK-OR]/.test(str[i + 1] || '')) {
-      flush();
-      const code = str[i + 1].toLowerCase();
-      if (LEGACY_COLORS[code]) {
-        state = { color: LEGACY_COLORS[code], bold: false, italic: false, underline: false, strike: false, obf: false };
-      } else if (code === 'l') state = { ...state, bold: true };
-      else if (code === 'o') state = { ...state, italic: true };
-      else if (code === 'n') state = { ...state, underline: true };
-      else if (code === 'm') state = { ...state, strike: true };
-      else if (code === 'k') state = { ...state, obf: true };
-      else if (code === 'r') state = reset;
-      i += 2;
-      continue;
-    }
-
-    // §-codes (legacy alternativo, poco usado en YAML pero por si acaso)
-    if (ch === '§' && /[0-9a-fk-orA-FK-OR]/.test(str[i + 1] || '')) {
-      flush();
-      const code = str[i + 1].toLowerCase();
-      if (LEGACY_COLORS[code]) state = { color: LEGACY_COLORS[code], bold: false, italic: false, underline: false, strike: false, obf: false };
-      i += 2;
-      continue;
-    }
-
-    // MiniMessage tags: <...>
-    if (ch === '<') {
-      const end = str.indexOf('>', i);
-      if (end !== -1) {
-        const raw = str.slice(i + 1, end);
-        flush();
-        handleTag(raw, state, stack, (s) => (state = s), reset);
-        i = end + 1;
-        continue;
-      }
-    }
-
-    buffer += ch;
-    i++;
+    // tags desconocidos (<hover>, <click>, <font>, <shift> de Nexo...) no se dibujan
+    if (next) { stack.push({ name, prev: state }); state = next; }
   }
-  flush();
-
+  push(str.slice(last));
   return runs;
 }
 
-function handleTag(raw, currentState, stack, setState, reset) {
-  const closing = raw.startsWith('/');
-  const body = closing ? raw.slice(1) : raw;
-  const [tagName, ...rest] = body.split(':');
-  const arg = rest.join(':');
-  const name = tagName.trim().toLowerCase();
-
-  if (closing) {
-    // pop hasta encontrar el tag correspondiente
-    const idx = [...stack].reverse().findIndex((s) => s.tag === name);
-    if (idx !== -1) {
-      const realIdx = stack.length - 1 - idx;
-      const restored = stack[realIdx].prevState;
-      stack.length = realIdx;
-      setState(restored);
-    }
-    return;
-  }
-
-  stack.push({ tag: name, prevState: currentState });
-
-  if (name === 'bold' || name === 'b') setState({ ...currentState, bold: true });
-  else if (name === 'italic' || name === 'i' || name === 'em') setState({ ...currentState, italic: true });
-  else if (name === 'underlined' || name === 'u') setState({ ...currentState, underline: true });
-  else if (name === 'strikethrough' || name === 'st') setState({ ...currentState, strike: true });
-  else if (name === 'obfuscated' || name === 'obf') setState({ ...currentState, obf: true });
-  else if (name === 'reset') setState(reset);
-  else if (name === 'c' || name === 'color' || name === 'colour') {
-    const hex = arg.startsWith('#') ? arg : NAMED_MINIMESSAGE_COLORS[arg] || '#FFFFFF';
-    setState({ ...currentState, color: hex.toUpperCase() });
-  } else if (name === 'gradient') {
-    // Aproximación: usamos el primer color del gradient como color base del run.
-    // Un gradiente real requeriría interpolar por caracter; lo dejamos como
-    // mejora futura (ver TODO abajo) y priorizamos legibilidad ahora.
-    const stops = arg.split(':').filter((s) => s.startsWith('#'));
-    setState({ ...currentState, color: (stops[0] || '#FFFFFF').toUpperCase(), _gradient: stops });
-  } else if (NAMED_MINIMESSAGE_COLORS[name]) {
-    setState({ ...currentState, color: NAMED_MINIMESSAGE_COLORS[name] });
-  }
-  // tags desconocidos (ej: <hover:...>, <click:...>) se ignoran silenciosamente
-}
-
-/**
- * Variante que sí interpola gradientes caracter por caracter (usado para el
- * preview "de lujo" del ítem, más costoso que parseMcText plano).
- */
+/** Como parseMcText, pero con los gradientes ya interpolados letra por letra (a lo largo de todo el tag). */
 export function parseMcTextWithGradients(input, defaultColor) {
   const runs = parseMcText(input, defaultColor);
-  const expanded = [];
-  for (const run of runs) {
-    if (run._gradient && run._gradient.length >= 2 && run.text.length > 0) {
-      const colors = interpolateGradient(run._gradient, run.text.length);
-      for (let i = 0; i < run.text.length; i++) {
-        expanded.push({ ...run, text: run.text[i], color: colors[i] });
-      }
-    } else {
-      expanded.push(run);
-    }
-  }
-  return expanded;
+  const total = new Map();
+  for (const run of runs) if (run._gradient) total.set(run._gradient, (total.get(run._gradient) ?? 0) + [...run.text].length);
+  const done = new Map();
+  return runs.flatMap((run) => {
+    if (!run._gradient) return [run];
+    const colors = interpolateGradient(run._gradient.stops, total.get(run._gradient));
+    const start = done.get(run._gradient) ?? 0;
+    const chars = [...run.text];
+    done.set(run._gradient, start + chars.length);
+    return chars.map((ch, i) => ({ ...run, text: ch, color: colors[start + i] }));
+  });
 }
 
 function interpolateGradient(stops, steps) {
@@ -177,8 +116,7 @@ function interpolateGradient(stops, steps) {
   for (let i = 0; i < steps; i++) {
     const t = (i / (steps - 1)) * segs;
     const segIdx = Math.min(Math.floor(t), segs - 1);
-    const localT = t - segIdx;
-    result.push(lerpColor(stops[segIdx], stops[segIdx + 1], localT));
+    result.push(lerpColor(stops[segIdx], stops[segIdx + 1], t - segIdx));
   }
   return result;
 }
@@ -186,19 +124,13 @@ function interpolateGradient(stops, steps) {
 function lerpColor(hexA, hexB, t) {
   const a = hexToRgb(hexA);
   const b = hexToRgb(hexB);
-  const r = Math.round(a.r + (b.r - a.r) * t);
-  const g = Math.round(a.g + (b.g - a.g) * t);
-  const bl = Math.round(a.b + (b.b - a.b) * t);
-  return `#${[r, g, bl].map((n) => n.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+  const mix = (x, y) => Math.round(x + (y - x) * t).toString(16).padStart(2, '0');
+  return `#${mix(a.r, b.r)}${mix(a.g, b.g)}${mix(a.b, b.b)}`.toUpperCase();
 }
 
 function hexToRgb(hex) {
   const h = hex.replace('#', '');
-  return {
-    r: parseInt(h.slice(0, 2), 16),
-    g: parseInt(h.slice(2, 4), 16),
-    b: parseInt(h.slice(4, 6), 16),
-  };
+  return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
 }
 
 /** Quita todos los códigos de color/formato, dejando solo el texto plano */

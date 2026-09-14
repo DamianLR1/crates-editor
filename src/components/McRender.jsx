@@ -24,17 +24,17 @@ const faceMatrix = ({ origin, u, v }, span, sx = 0, sy = 0) => {
   return `matrix(${a} ${b} ${c} ${d} ${origin[0] - a * sx - c * sy} ${origin[1] - b * sx - d * sy})`;
 };
 
-/** Ítem como en el inventario: textura plana, bloque isométrico o cabeza 3D con su skin. */
-export function McItem({ assets, material, skin, size = 32, glint = false, dim = false, fallback = null }) {
-  const model = assets?.item(material);
+/** Ítem como en el inventario: textura plana, modelo 3D (bloques, ítems de packs) o cabeza con su skin. */
+export function McItem({ assets, material, cmd = null, itemModel = null, skin, size = 32, glint = false, dim = false, fallback = null }) {
+  const model = assets?.item(material, { cmd, itemModel });
   if (!model) return fallback;
 
   let body;
   if (model.kind === 'head') {
     const hash = skinHash(skin);
     body = <HeadIso src={hash ? `https://textures.minecraft.net/texture/${hash}` : assets.steve} size={size} />;
-  } else if (model.kind === 'cube') {
-    body = <CubeIso {...model} size={size} />;
+  } else if (model.kind === 'model') {
+    body = <ModelIso faces={model.faces} size={size} />;
   } else {
     const layers = [model.overlay, model.src].filter(Boolean).map((u) => `url(${u})`).join(', ');
     body = <span className="absolute inset-0" style={{ ...PIXEL, backgroundImage: layers, backgroundSize: `${size}px auto`, backgroundRepeat: 'no-repeat' }} />;
@@ -61,16 +61,31 @@ export function McItem({ assets, material, skin, size = 32, glint = false, dim =
   );
 }
 
-function CubeIso({ top, left, right, size }) {
-  const faces = { top, left, right };
+/** Caras ya proyectadas (mcAssets.projectModel) en un slot de 16x16: uv -> pantalla con una afín. */
+function ModelIso({ faces, size }) {
+  const id = useId().replace(/:/g, '');
+  const shades = [...new Set(faces.map((f) => f.b))].filter((b) => b < 1);
+  const filter = (b) => `${id}b${Math.round(b * 1000)}`;
   return (
-    <svg viewBox="0 0 32 32" width={size} height={size} className="absolute inset-0" aria-hidden="true">
-      {Object.entries(FACES).map(([name, face]) => faces[name] && (
-        <g key={name}>
-          <image href={faces[name]} width="16" height="16" preserveAspectRatio="xMidYMin slice" transform={faceMatrix(face, 16)} style={PIXEL} />
-          {face.shade > 0 && <polygon points={face.points} fill="#000" opacity={face.shade} />}
-        </g>
-      ))}
+    <svg viewBox="0 0 16 16" width={size} height={size} overflow="visible" className="absolute inset-0" aria-hidden="true">
+      <defs>
+        {shades.map((b) => (
+          <filter key={b} id={filter(b)} colorInterpolationFilters="sRGB">
+            <feColorMatrix type="matrix" values={`${b} 0 0 0 0 0 ${b} 0 0 0 0 0 ${b} 0 0 0 0 0 1 0`} />
+          </filter>
+        ))}
+      </defs>
+      {faces.map(({ src, uv: [u1, v1, u2, v2], p0, pu, pv, b }, i) => {
+        const [a, bb, c, d] = [pu[0] / (u2 - u1), pu[1] / (u2 - u1), pv[0] / (v2 - v1), pv[1] / (v2 - v1)];
+        const [x, y, w, h] = [Math.min(u1, u2), Math.min(v1, v2), Math.abs(u2 - u1), Math.abs(v2 - v1)];
+        return (
+          <g key={i} transform={`matrix(${a} ${bb} ${c} ${d} ${p0[0] - a * u1 - c * v1} ${p0[1] - bb * u1 - d * v1})`} filter={b < 1 ? `url(#${filter(b)})` : undefined}>
+            <svg x={x} y={y} width={w} height={h} viewBox={`${x} ${y} ${w} ${h}`} overflow="hidden">
+              <image href={src} width="16" height="16" preserveAspectRatio="xMidYMin slice" style={PIXEL} />
+            </svg>
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -129,10 +144,21 @@ function drawLine(canvas, runs, font, scale, shadow) {
     }
   }
 
+  // glifos más altos que la línea (íconos del resource pack): el canvas crece sin mover el texto
+  let above = 0;
+  let below = 0;
+  for (const { glyph } of glyphs) {
+    if (!glyph?.sheet) continue;
+    above = Math.max(above, -(TOP + glyph.sheet.top));
+    below = Math.max(below, TOP + glyph.sheet.top + glyph.sheet.h + 1 - LINE);
+  }
+  const base = TOP + above;
+
   canvas.width = Math.max(1, Math.ceil((x + 1) * scale));
-  canvas.height = LINE * scale;
+  canvas.height = Math.ceil((LINE + above + below) * scale);
   canvas.style.width = `${canvas.width}px`;
   canvas.style.height = `${canvas.height}px`;
+  canvas.style.margin = `${-above * scale}px 0 ${-below * scale}px`;
   ctx.imageSmoothingEnabled = false;
   const tint = document.createElement('canvas');
   const t = tint.getContext('2d');
@@ -140,7 +166,7 @@ function drawLine(canvas, runs, font, scale, shadow) {
   const paint = ({ glyph, ch, x: gx, advance, run }, offset, color) => {
     for (const bx of run.bold ? [0, 1] : [0]) {
       const px = (gx + offset + bx) * scale;
-      const py = (TOP + offset) * scale;
+      const py = (base + offset) * scale;
       ctx.fillStyle = color;
       if (!glyph) {
         ctx.font = `${8 * scale}px monospace`;
@@ -169,8 +195,8 @@ function drawLine(canvas, runs, font, scale, shadow) {
         ctx.drawImage(tint, px, py + s.top * scale);
       }
     }
-    if (run.underline) ctx.fillRect((gx + offset - 1) * scale, (TOP + offset + 8) * scale, (advance + 1) * scale, scale);
-    if (run.strike) ctx.fillRect((gx + offset - 1) * scale, (TOP + offset + 3.5) * scale, (advance + 1) * scale, scale);
+    if (run.underline) ctx.fillRect((gx + offset - 1) * scale, (base + offset + 8) * scale, (advance + 1) * scale, scale);
+    if (run.strike) ctx.fillRect((gx + offset - 1) * scale, (base + offset + 3.5) * scale, (advance + 1) * scale, scale);
   };
 
   if (shadow) glyphs.forEach((g) => paint(g, 1, shadowOf(g.run.color)));

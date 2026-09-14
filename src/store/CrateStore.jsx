@@ -19,7 +19,10 @@ import { convertCrate } from '../lib/convert661.js';
 import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
 import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
 import { readServerFolder, inspectCrate } from '../lib/serverContext.js';
-import { loadCachedAssets, extractAssets, createAssets, saveAssets, clearCachedAssets, loadFont } from '../lib/mcAssets.js';
+import {
+  loadCachedAssets, extractAssets, createAssets, saveAssets, clearCachedAssets, loadFont, loadCached, saveCached, clearCached,
+} from '../lib/mcAssets.js';
+import { readMmoItems, withPluginItem } from '../lib/previewMenu.js';
 
 const RARITY_WEIGHTS_STORAGE_KEY = 'crateforge.rarityWeights';
 
@@ -122,8 +125,10 @@ export function CrateProvider({ children }) {
     setMcStatus('loading');
     try {
       const current = add ? assetsRef.current : null;
-      const files = new Map(current?.files ?? []);
-      for (const [path, data] of await extractAssets(picked)) files.set(path, data);
+      const extracted = await extractAssets(picked);
+      // la base del juego va abajo aunque se agregue después: los packs pisan sus ítems
+      const layers = extracted.base ? [extracted.files, current?.files] : [current?.files, extracted.files];
+      const files = new Map(layers.flatMap((layer) => [...(layer ?? [])]));
       if (![...files.keys()].some((k) => k.startsWith('textures/'))) {
         throw new Error('No encontré texturas de Minecraft. Elegí el .jar del cliente (.minecraft/versions/<versión>/<versión>.jar) o un resource pack .zip.');
       }
@@ -142,11 +147,39 @@ export function CrateProvider({ children }) {
     applyAssets(null);
   }, [applyAssets]);
 
+  // Ítems de MMOItems (plugins/MMOItems/item/*.yml): material, modelo y nombre de las rewards CUSTOM
+  const [pluginItems, setPluginItems] = useState(null);
+  useEffect(() => {
+    loadCached('mmoitems').then((items) => items && setPluginItems(items));
+  }, []);
+  const loadMmoItems = useCallback(async (fileList) => {
+    const items = {};
+    for (const file of [...(fileList ?? [])].filter((f) => /\.ya?ml$/i.test(f.name))) {
+      try { Object.assign(items, readMmoItems(file.name, await file.text())); } catch { /* yml roto: se saltea */ }
+    }
+    if (!Object.keys(items).length) {
+      setMcStatus('No encontré ítems de MMOItems: elegí la carpeta plugins/MMOItems/item del server.');
+      return;
+    }
+    setMcStatus(null);
+    setPluginItems(items);
+    saveCached('mmoitems', items).catch(() => {});
+  }, []);
+  const clearMmoItems = useCallback(() => {
+    clearCached('mmoitems').catch(() => {});
+    setPluginItems(null);
+  }, []);
+
   // Rewards.Rarities vive en el config.yml GLOBAL: se carga de la carpeta del
   // server o se configura a mano (persistido localmente).
   const [rarityWeights, setRarityWeightsState] = useState(loadStoredRarityWeights);
 
-  const model = useMemo(() => (text == null ? null : loadCrateFile(text).model), [text]);
+  const model = useMemo(() => {
+    if (text == null) return null;
+    const loaded = loadCrateFile(text).model;
+    if (pluginItems && loaded.rewards) loaded.rewards = loaded.rewards.map((r) => withPluginItem(r, pluginItems));
+    return loaded;
+  }, [text, pluginItems]);
 
   const setRarityWeights = useCallback((next) => {
     setRarityWeightsState(next);
@@ -345,6 +378,9 @@ export function CrateProvider({ children }) {
     mcStatus,
     loadMcAssets,
     clearMcAssets,
+    pluginItems,
+    loadMmoItems,
+    clearMmoItems,
     preview,
     openPreview,
     closePreview: () => setPreview(null),

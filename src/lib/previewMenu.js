@@ -8,7 +8,7 @@
 // La edición usa editCrateText (sirve para cualquier YAML): solo cambian las
 // líneas tocadas y se conservan los comentarios del archivo.
 
-import { isMap, isScalar } from 'yaml';
+import { isMap, isScalar, parse } from 'yaml';
 import { parseYaml } from './crateFile.js';
 
 export const MENU_TYPES = [1, 2, 3, 4, 5, 6].map((rows) => `minecraft:generic_9x${rows}`);
@@ -178,7 +178,14 @@ export function applyEmptyLines(lore) {
 export function rewardItem(reward) {
   const item = reward.type === 'ITEM' && !reward.customPreview ? reward.itemsData[0] : reward.previewData;
   if (!item) return { material: 'minecraft:paper' };
-  if (item.type === 'CUSTOM') return { material: 'custom', amount: Number(item.amount) || 1 };
+  if (item.type === 'CUSTOM') {
+    const amount = Number(item.amount) || 1;
+    const known = reward.pluginItem; // de los yml de MMOItems (withPluginItem)
+    if (known) return { material: known.material, amount, cmd: known.cmd, itemModel: null, skin: null, glint: false };
+    // Nexo genera assets/nexo/items/<id>.json en su resource pack
+    if (String(item.handler).toLowerCase() === 'nexo') return { material: 'custom', amount, itemModel: `nexo:${item.itemId}` };
+    return { material: 'custom', amount };
+  }
   const tag = String(item.tagValue ?? '');
   const last = (re) => [...tag.matchAll(re)].at(-1)?.[1]; // id y count de nivel superior van al final del SNBT
   // custom_model_data: {floats:[N]} desde 1.21.4, un entero antes; con item_model eligen el modelo del resource pack
@@ -191,6 +198,32 @@ export function rewardItem(reward) {
     cmd: cmd == null ? null : Number(cmd),
     itemModel: tag.match(/"minecraft:item_model":"([^"]+)"/)?.[1] ?? null,
   };
+}
+
+/** plugins/MMOItems/item/<tipo>.yml -> { 'TIPO:ID': { material, cmd, name } } (base.material, base.custom-model-data, base.name). */
+export function readMmoItems(fileName, text) {
+  const type = String(fileName).replace(/\.ya?ml$/i, '').toUpperCase();
+  const items = {};
+  // como Bukkit (SnakeYAML): una clave repetida no rompe el archivo, gana la última
+  for (const [id, node] of Object.entries(parse(text, { uniqueKeys: false, logLevel: 'error' }) ?? {})) {
+    const base = node?.base;
+    if (!base?.material) continue; // config.yml y demás archivos del plugin
+    items[`${type}:${String(id).toUpperCase()}`] = {
+      material: `minecraft:${String(base.material).toLowerCase()}`,
+      cmd: Number(base['custom-model-data'] ?? base.custom_model_data) || null, // MMOItems acepta las dos
+      // MMOItems usa el hex de Bukkit con & (&x&R&R&G&G&B&B)
+      name: base.name == null ? null : String(base.name).replace(/&x((?:&[0-9a-f]){6})/gi, (_, hex) => `#${hex.replace(/&/g, '')}`),
+    };
+  }
+  return items;
+}
+
+/** Reward CUSTOM de MMOItems con su ítem conocido: ícono y, si no tiene Name propio, el nombre del ítem (como en el juego). */
+export function withPluginItem(reward, pluginItems) {
+  const shown = reward.type === 'ITEM' && !reward.customPreview ? reward.itemsData?.[0] : reward.previewData;
+  const known = shown?.type === 'CUSTOM' && String(shown.handler).toLowerCase() === 'mmoitems'
+    ? pluginItems?.[String(shown.itemId).toUpperCase()] : null;
+  return known ? { ...reward, pluginItem: known, displayName: reward.name ? reward.displayName : known.name ?? reward.displayName } : reward;
 }
 
 /** Hash de la skin de una cabeza a partir del componente minecraft:profile del SNBT. */

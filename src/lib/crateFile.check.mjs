@@ -11,7 +11,7 @@ import { convertCrate, convertKey } from './convert661.js';
 import { computePercentages } from './weightMath.js';
 import {
   readPreview, layoutSlots, parseSlots, formatSlots, toggleSlot, menuShape, applyEmptyLines, fillText,
-  renderRewardLore, rewardVars, rewardLimit, rewardItem, skinFromTag,
+  renderRewardLore, rewardVars, rewardLimit, rewardItem, skinFromTag, readMmoItems, withPluginItem,
 } from './previewMenu.js';
 import { readZip, resolveItem, refPath } from './mcAssets.js';
 import { parseMcText, parseMcTextWithGradients, stripMcCodes } from './mcText.js';
@@ -418,6 +418,17 @@ assert.deepEqual(
 );
 const coin = rewardItem({ type: 'COMMAND', previewData: { type: 'VANILLA', tagValue: '{components:{"minecraft:custom_model_data":{floats:[14000.0f]},"minecraft:item_name":\'{"text":"Coin"}\'},count:1,id:"minecraft:paper"}' } });
 assert.deepEqual([coin.material, coin.cmd, coin.itemModel], ['minecraft:paper', 14000, null]);
+
+// Rewards CUSTOM: MMOItems con sus yml (material, modelo y nombre), Nexo con el items/ de su pack
+const mmo = readMmoItems('armor.yml', "PECHERA:\n  base:\n    material: LEATHER_CHESTPLATE\n    custom-model-data: 1002.0\n    name: '&x&E&B&6&3&3&APechera'\nOTRO:\n  nada: 1\n");
+assert.deepEqual(mmo, { 'ARMOR:PECHERA': { material: 'minecraft:leather_chestplate', cmd: 1002, name: '#EB633APechera' } });
+assert.equal(readMmoItems('sword.yml', 'E:\n  base:\n    material: DIAMOND_SWORD\n    custom_model_data: 15889113\n')['SWORD:E'].cmd, 15889113);
+assert.equal(readMmoItems('sword.yml', 'E:\n  base:\n    material: STONE\n    material: DIAMOND_SWORD\n')['SWORD:E'].material, 'minecraft:diamond_sword', 'clave repetida: gana la última, como en Bukkit');
+const pechera = withPluginItem({ type: 'COMMAND', name: null, displayName: 'MMOItems:ARMOR:PECHERA', previewData: { type: 'CUSTOM', handler: 'MMOItems', itemId: 'ARMOR:PECHERA', amount: 1 } }, mmo);
+assert.equal(pechera.displayName, '#EB633APechera');
+assert.deepEqual(rewardItem(pechera), { material: 'minecraft:leather_chestplate', amount: 1, cmd: 1002, itemModel: null, skin: null, glint: false });
+assert.equal(withPluginItem({ ...pechera, name: '&aPropio', displayName: '&aPropio' }, mmo).displayName, '&aPropio', 'un Name propio gana');
+assert.deepEqual(rewardItem({ type: 'COMMAND', previewData: { type: 'CUSTOM', handler: 'Nexo', itemId: 'coin', amount: 2 } }), { material: 'custom', amount: 2, itemModel: 'nexo:coin' });
 
 // ---------- Crates reales (opcional) ----------
 

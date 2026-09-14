@@ -304,7 +304,7 @@ function Workspace() {
           {chest ? (
             <McChest assets={mcAssets} font={mcFont} scale={scale} rows={layout.rows} title={fillText(p.title, crateVars)} tip={tip} {...slotProps} />
           ) : (
-            <FlatGrid cols={layout.cols} title={fillText(p.title, crateVars)} {...slotProps} />
+            <FlatGrid cols={layout.cols} title={fillText(p.title, crateVars)} assets={mcAssets} {...slotProps} />
           )}
 
           <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-ink-500">
@@ -349,10 +349,10 @@ function Workspace() {
 // ---- Texturas del juego ----
 
 function AssetsBar() {
-  const { mcAssets, mcFont, mcStatus, loadMcAssets, clearMcAssets } = useCrate();
+  const { mcAssets, mcFont, mcStatus, loadMcAssets, clearMcAssets, pluginItems, loadMmoItems, clearMmoItems } = useCrate();
   const fileRef = useRef(null);
   const addRef = useRef(null);
-  const hasUnifont = mcAssets && [...mcAssets.files.keys()].some((k) => k.endsWith('.hex'));
+  const mmoRef = useRef(null);
   const pick = (ref) => ref.current.click();
 
   return (
@@ -367,10 +367,11 @@ function AssetsBar() {
             <button className="underline hover:text-parch-200" onClick={() => pick(fileRef)}>Cambiar</button>
             <button className="underline hover:text-crimson-400" onClick={clearMcAssets}>Quitar</button>
           </p>
-          {!hasUnifont && (
-            <p className="text-ink-500 leading-relaxed">
-              Para versalitas (ᴄᴀᴊᴀ), flechas y emojis falta la fuente unifont: agregá el <code className="text-parch-200">unifont.zip</code> del
-              juego (está en <code className="text-parch-200">.minecraft\assets\objects</code>, con nombre hash).
+          {!mcAssets.gui && (
+            <p className="text-gold-400 leading-relaxed">
+              Faltan el inventario y las texturas vanilla (el jar del server, <code>paper-….jar</code>, no los trae). Agregá la copia que guarda
+              Nexo, <code className="text-parch-200">plugins/Nexo/pack/.assetCache/1.21.4/1.21.4.zip</code>, o el jar del cliente,
+              {' '}<code className="text-parch-200">%APPDATA%\.minecraft\versions\1.21.4\1.21.4.jar</code>.
             </p>
           )}
         </div>
@@ -380,8 +381,9 @@ function AssetsBar() {
           <div className="flex-1 space-y-2">
             <p className="text-parch-200">Ver el menú con las texturas y la fuente de Minecraft</p>
             <p className="text-ink-500 leading-relaxed">
-              Elegí el .jar de tu cliente, por ejemplo <code className="text-parch-200">%APPDATA%\.minecraft\versions\1.21.4\1.21.4.jar</code>, y si
-              querés un resource pack .zip. Se leen en tu navegador y quedan guardados acá: no se suben a ningún lado (son assets de
+              Con Nexo, elegí juntos <code className="text-parch-200">plugins/Nexo/pack/pack.zip</code> y
+              {' '}<code className="text-parch-200">plugins/Nexo/pack/.assetCache/1.21.4/1.21.4.zip</code> (los assets vanilla). Si no, el .jar de tu
+              cliente (<code className="text-parch-200">%APPDATA%\.minecraft\versions\1.21.4\1.21.4.jar</code>) y el resource pack .zip. Se leen en tu navegador y quedan guardados acá: no se suben a ningún lado (son assets de
               Mojang y no se publican con el editor).
             </p>
             <Button icon={FileUp} onClick={() => pick(fileRef)} disabled={mcStatus === 'loading'}>Cargar .jar / .zip</Button>
@@ -390,6 +392,13 @@ function AssetsBar() {
       )}
       {mcStatus === 'loading' && <p className="mt-2 text-gold-400">Leyendo texturas…</p>}
       {mcStatus && mcStatus !== 'loading' && <p className="mt-2 text-crimson-400">{mcStatus}</p>}
+      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-ink-800 pt-2 text-ink-500">
+        Ítems de MMOItems:
+        {pluginItems ? <span className="text-parch-200">{Object.keys(pluginItems).length} cargados</span> : 'no cargados (las rewards CUSTOM se ven con un ícono genérico)'}
+        <button className="underline hover:text-parch-200" onClick={() => pick(mmoRef)}>{pluginItems ? 'Cambiar' : 'Elegir carpeta plugins/MMOItems/item'}</button>
+        {pluginItems && <button className="underline hover:text-crimson-400" onClick={clearMmoItems}>Quitar</button>}
+      </p>
+      <input ref={mmoRef} data-testid="mmoitems" type="file" webkitdirectory="" multiple className="hidden" onChange={(e) => { loadMmoItems(e.target.files); e.target.value = ''; }} />
       {/* sin `accept`: el unifont.zip del juego se guarda con nombre hash, sin extensión */}
       <input ref={fileRef} data-testid="mc-assets" type="file" multiple className="hidden" onChange={(e) => { loadMcAssets(e.target.files); e.target.value = ''; }} />
       <input ref={addRef} data-testid="mc-assets-add" type="file" multiple className="hidden" onChange={(e) => { loadMcAssets(e.target.files, true); e.target.value = ''; }} />
@@ -468,7 +477,7 @@ function McTooltip({ tip, font, scale, style }) {
 
 // ---- Sin texturas: grilla aproximada ----
 
-function FlatGrid({ cols, title, cells, highlighted, hover, setHover, onClick, showNumbers, brush }) {
+function FlatGrid({ cols, title, assets, cells, highlighted, hover, setHover, onClick, showNumbers, brush }) {
   return (
     <div className="overflow-x-auto">
       <div className="inline-block p-2" style={GUI}>
@@ -488,7 +497,7 @@ function FlatGrid({ cols, title, cells, highlighted, hover, setHover, onClick, s
               className={`relative w-10 h-10 flex items-center justify-center ${brush ? 'cursor-crosshair' : 'cursor-pointer'}`}
               style={SLOT}
             >
-              {cell && <SlotItem cell={cell} size={36} />}
+              {cell && <SlotItem cell={cell} assets={assets} size={36} />}
               {highlighted.includes(slot) && <span className="pointer-events-none absolute inset-0 ring-2 ring-inset ring-gold-400" />}
               {hover === slot && <span className="pointer-events-none absolute inset-0 bg-white/30" />}
               {showNumbers && <span className="pointer-events-none absolute left-0.5 top-0 text-[8px] leading-none text-black/45">{slot}</span>}

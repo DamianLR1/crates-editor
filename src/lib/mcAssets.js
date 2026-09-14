@@ -67,12 +67,16 @@ async function inflate(raw) {
  * ponytail: no aplica los overlays del pack (carpetas por versión); los packs de hoy los usan para shaders.
  */
 export async function extractAssets(fileList) {
-  const files = [...fileList].sort((a, b) => Number(!/\.jar$/i.test(a.name)) - Number(!/\.jar$/i.test(b.name)));
+  const zips = await Promise.all([...fileList].map(async (file) => {
+    const entries = await readZip(await file.arrayBuffer(), (n) => KEEP.test(n) || /^[^/]+\.hex$/.test(n) || n === ROOT);
+    return { entries, base: entries.has(ROOT) || /\.jar$/i.test(file.name) };
+  }));
+  // la base del juego (.jar del cliente o la copia que guarda Nexo en pack/.assetCache) primero: los packs la pisan
+  zips.sort((a, b) => Number(b.base) - Number(a.base));
   const merged = new Map();
-  for (const file of files) {
-    const entries = await readZip(await file.arrayBuffer(), (n) => KEEP.test(n) || /^[^/]+\.hex$/.test(n));
+  for (const { entries } of zips) {
     for (const [name, data] of entries) {
-      merged.set(name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name.startsWith('assets/') ? name : `font/${name}`, data);
+      if (name !== ROOT) merged.set(name.startsWith(PREFIX) ? name.slice(PREFIX.length) : name.startsWith('assets/') ? name : `font/${name}`, data);
     }
   }
   // en algunas versiones unifont viene como un .zip adentro del .jar: se guarda ya descomprimido
@@ -82,8 +86,10 @@ export async function extractAssets(fileList) {
     const inner = await readZip(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength), (n) => n.endsWith('.hex'));
     for (const [hexName, hex] of inner) merged.set(`font/${hexName}`, hex);
   }
-  return merged;
+  return { files: merged, base: zips.some((z) => z.base) };
 }
+
+const ROOT = 'assets/.mcassetsroot'; // marca de los assets vanilla
 
 // ---- Caché en IndexedDB ----
 
@@ -114,8 +120,11 @@ export async function loadCachedAssets() {
   }
 }
 
-export const saveAssets = (files, label) => run('readwrite', (store) => store.put({ files: Object.fromEntries(files), label }, KEY));
-export const clearCachedAssets = () => run('readwrite', (store) => store.delete(KEY));
+export const loadCached = (key) => run('readonly', (store) => store.get(key)).catch(() => null);
+export const saveCached = (key, value) => run('readwrite', (store) => store.put(value, key));
+export const clearCached = (key) => run('readwrite', (store) => store.delete(key));
+export const saveAssets = (files, label) => saveCached(KEY, { files: Object.fromEntries(files), label });
+export const clearCachedAssets = () => clearCached(KEY);
 
 // ---- Acceso ----
 
@@ -325,7 +334,7 @@ export async function loadFont(assets) {
   // el default.json del jar ya incluye la base, pero el de un pack lo pisa al mezclar archivos
   ['default', 'include/space', 'include/default'].forEach(include);
   const bitmaps = providers.filter((p) => p.type === 'bitmap' && p.file && p.chars);
-  if (!bitmaps.length || typeof document === 'undefined') return null;
+  if (typeof document === 'undefined') return null;
 
   const spaces = {};
   for (const p of providers) if (p.type === 'space') for (const [ch, advance] of Object.entries(p.advances ?? {})) spaces[ch] ??= advance;
@@ -367,11 +376,13 @@ export async function loadFont(assets) {
   });
 
   // unifont (lo que no está en los bitmaps: versalitas ᴄᴀᴊᴀ, flechas, emojis...): líneas
-  // "XXXX:bits" de 16 filas; se arman recién cuando se usan (son ~57 mil glifos)
+  // "XXXX:bits" de 16 filas; se arman recién cuando se usan. La del juego si la agregaron;
+  // si no, la parte que trae el editor (GNU Unifont 16.0.01, SIL OFL 1.1: unifont-LICENSE.txt)
+  const hexTexts = [...assets.files].filter(([name]) => name.startsWith('font/') && name.endsWith('.hex')).map(([, data]) => new TextDecoder().decode(data));
+  if (!hexTexts.length) hexTexts.push((await import('./unifont-subset.hex?raw')).default);
   const hex = new Map();
-  for (const [name, data] of assets.files) {
-    if (!name.startsWith('font/') || !name.endsWith('.hex')) continue;
-    for (const line of new TextDecoder().decode(data).split('\n')) {
+  for (const text of hexTexts) {
+    for (const line of text.split('\n')) {
       const colon = line.indexOf(':');
       if (colon > 0) hex.set(parseInt(line.slice(0, colon), 16), line.slice(colon + 1).trim());
     }

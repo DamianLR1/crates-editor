@@ -45,6 +45,9 @@ export function parseCrazyCrate(text) {
     const name = String(prize.DisplayName ?? id);
     const label = `Premio "${id}" (${plain(name)})`;
     const commands = list(prize.Commands).map(toExcellentCommand);
+    if (list(prize.Commands).some((c) => String(c).includes('%player$'))) {
+      warnings.push(`${label}: un comando tenía "%player$" (en CrazyCrates no se reemplazaba y el premio no llegaba a nadie); quedó como %player_name%.`);
+    }
     // Chance 10 y MaxRange 100 son los valores por defecto del migrador cuando la clave no está
     const weight = crazyWeight(num(prize.Chance, 10), num(prize.MaxRange, 100));
 
@@ -105,7 +108,8 @@ function tagValueOf(prize) {
   return `{${components.length ? `components:{${components.join(',')}},` : ''}count:${amount},id:"minecraft:${id}"}`;
 }
 
-const toExcellentCommand = (cmd) => String(cmd).replaceAll('%player%', '%player_name%');
+// %player$ es un typo frecuente de %player%: se corrige también
+const toExcellentCommand = (cmd) => String(cmd).replace(/%player[%$]/g, '%player_name%');
 const material = (value) => String(value).toLowerCase().replace(/^minecraft:/, '').trim();
 const plain = (value) => stripMcCodes(String(value)).trim();
 const list = (value) => (Array.isArray(value) ? value : []);

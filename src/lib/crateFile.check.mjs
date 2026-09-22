@@ -459,6 +459,7 @@ const CRAZY = `Crate:
       MaxRange: 100
       Commands:
         - eco give %player% 1000000
+        - mi give MATERIAL X %player$ 4
     '2':
       DisplayName: <gray>Tapado
       Chance: 5
@@ -473,7 +474,8 @@ const crazy = parseCrazyCrate(CRAZY);
 // id repetido: como en el plugin, gana el último (sin Chance/MaxRange: 10/100 del migrador = peso 10)
 assert.deepEqual(crazy.rewards.map((r) => [r.key, r.weight]), [['1m_dinero', 60], ['premio_2', 10]]);
 assert.ok(crazy.warnings.some((w) => /"2" está 2 veces.*Nunca salían: Tapado/.test(w)), crazy.warnings.join('\n'));
-assert.deepEqual(crazy.rewards.map((r) => r.commands), [['eco give %player_name% 1000000'], ['say default %player_name%']], 'Prize-Commands si el premio no trae');
+assert.deepEqual(crazy.rewards.map((r) => r.commands), [['eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4'], ['say default %player_name%']], 'Prize-Commands si el premio no trae; %player$ también');
+assert.ok(crazy.warnings.some((w) => w.includes('%player$')));
 assert.equal(crazy.rewards[0].previewData.tagValue, '{count:2,id:"minecraft:sunflower"}');
 assert.equal(crazy.rewards[1].previewData.tagValue, '{components:{"minecraft:custom_model_data":{floats:[1002.0f]},"minecraft:enchantment_glint_override":1b},count:1,id:"minecraft:red_terracotta"}');
 const crazyModel = loadCrateFile(buildExcellentCratesYaml(crazy)).model;

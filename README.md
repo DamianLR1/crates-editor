@@ -46,6 +46,13 @@ Copiá después `crates/` y `keys/` al server con el plugin apagado.
 
 Formato verificado contra el source del fork 6.3.3 y el de 6.6.1 que usa el server (`Crate`, `AbstractReward`, `CommandReward`, `ItemReward`, `LimitValues`, `Cost`, `ItemHelper` y los adaptadores de ítems de nightcore).
 
+## Importar desde otros plugins
+
+En la pantalla de inicio, *Convertir desde CrazyCrates o SpecializedCrates* abre un `.yml` de esos plugins (se detecta solo cuál es) y lo convierte a una crate de ExcellentCrates 6.3.3, que después se puede pasar a 6.6.1 con el conversor.
+
+- **CrazyCrates**: `Chance`/`MaxRange` pasan a `Weight` con la misma fórmula que usa el plugin para migrarlos (`(Chance / MaxRange) × 100`, un decimal, `MaxRange` tope 100000), así el reparto de probabilidades es el mismo. Se llevan nombre, lore, ítem y cantidad de preview (con `Custom-Model-Data`, `Model` y `Glowing`), comandos (`%player%` → `%player_name%`, y `Prize-Commands` si el premio no trae) y el ítem, la descripción y el holograma de la caja. Si un id de premio está repetido, gana el último igual que en el plugin, y se avisa cuáles nunca salían. La llave, el tipo de caja (animaciones), `Items`, `Messages` y `Tiers` no tienen equivalente directo y quedan como aviso.
+- **SpecializedCrates**: `chance` pasa 1:1 a `Weight`.
+
 ## Correrlo localmente
 
 ```bash
@@ -78,7 +85,8 @@ src/
     crateFile.check.mjs   -> check (npm run check)
     weightMath.js         -> pesos, probabilidades, residuos, simulación
     serverContext.js      -> lectura de la carpeta del plugin + validaciones
-    specializedConverter.js -> SpecializedCrates -> ExcellentCrates
+    specializedConverter.js -> SpecializedCrates -> ExcellentCrates (y el YAML de salida de los importadores)
+    crazyCrates.js        -> CrazyCrates -> ExcellentCrates
     mcText.js             -> texto como nightcore (& / § / hex / tags, esquema de colores)
   store/CrateStore.jsx    -> estado global (el texto YAML es la fuente de verdad)
   components/             -> UI (fields.jsx: inputs y piezas compartidas)

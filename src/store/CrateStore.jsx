@@ -17,6 +17,7 @@ import {
 } from '../lib/crateFile.js';
 import { convertCrate } from '../lib/convert661.js';
 import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
+import { parseCrazyCrate, isCrazyCrate } from '../lib/crazyCrates.js';
 import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
 import { readServerFolder, inspectCrate } from '../lib/serverContext.js';
 import {
@@ -212,15 +213,20 @@ export function CrateProvider({ children }) {
     setConversionWarnings(notice);
   }, []);
 
-  /** SpecializedCrates (.crate/.yml) -> crate de ExcellentCrates 6.3.3. Ver specializedConverter.js. */
-  const convertSpecializedFile = useCallback((name, src) => {
+  /** CrazyCrates o SpecializedCrates (se detecta solo) -> crate de ExcellentCrates 6.3.3. */
+  const convertForeignCrate = useCallback((name, src) => {
     try {
-      const parsed = parseSpecializedCrate(src);
+      const crazy = isCrazyCrate(src);
+      const parsed = crazy ? parseCrazyCrate(src) : parseSpecializedCrate(src);
       setTargetTotal(parsed.suggestedTargetTotal || 1000);
       open(name.replace(/\.(crate|ya?ml)$/i, '') + '.yml', buildExcellentCratesYaml(parsed), {
-        title: `Convertido desde ${name} (SpecializedCrates): ${parsed.rewards.length} reward(s), pesos 1:1 desde el chance original.`,
+        title: `Convertido desde ${name} (${parsed.sourcePlugin}): ${parsed.rewards.length} reward(s), ${crazy
+          ? 'pesos con la fórmula que usa CrazyCrates para migrar Chance/MaxRange'
+          : 'pesos 1:1 desde el chance original'}.`,
         items: parsed.warnings,
-        note: 'Los rewards con nbt-tags quedan como preview vanilla; si usabas ítems custom, cargalos a mano.',
+        note: crazy
+          ? 'La llave, el tipo de caja y los ítems que entrega cada premio no tienen equivalente directo: revisá los avisos.'
+          : 'Los rewards con nbt-tags quedan como preview vanilla; si usabas ítems custom, cargalos a mano.',
       });
     } catch (e) {
       setError(e.message || String(e));
@@ -356,7 +362,7 @@ export function CrateProvider({ children }) {
       items: warnings,
     }),
     newBlankFile: (format = V661) => open('nueva_caja.yml', format === V661 ? convertCrate(BLANK_CRATE).text : BLANK_CRATE),
-    convertSpecializedFile,
+    convertForeignCrate,
     conversionWarnings,
     dismissConversionWarnings: () => setConversionWarnings(null),
     updateWeight: (key, weight) => edit((d) => setRewardWeight(d, key, weight)),

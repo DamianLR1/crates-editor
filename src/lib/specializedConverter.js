@@ -185,13 +185,16 @@ export function buildExcellentCratesYaml(parsed, options = {}) {
   const crateId = options.crateId || slugify(parsed.crateName) || 'crate_convertida';
 
   const rewardsYaml = parsed.rewards.map((r) => rewardBlock(r)).join('\n');
+  // descripción e ítem de la caja, cuando el plugin de origen los trae (CrazyCrates)
+  const description = parsed.description ?? [];
+  const descriptionYaml = description.length ? `\n${description.map((l) => `- '${escapeSingleQuotes(l)}'`).join('\n')}` : ' []';
 
   return `Name: '${escapeSingleQuotes(parsed.crateName)}'
-Description: []
+Description:${descriptionYaml}
 ItemProvider:
   Type: VANILLA
   Tag:
-    Value: '{count:1,id:"minecraft:chest"}'
+    Value: '{count:1,id:"minecraft:${parsed.itemMaterial || 'chest'}"}'
     DataVersion: 4189
 ItemStackable: false
 Permission_Required: false

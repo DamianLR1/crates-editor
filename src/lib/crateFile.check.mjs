@@ -15,6 +15,8 @@ import {
 } from './previewMenu.js';
 import { readZip, resolveItem, refPath } from './mcAssets.js';
 import { parseMcText, parseMcTextWithGradients, stripMcCodes } from './mcText.js';
+import { parseCrazyCrate, isCrazyCrate, crazyWeight } from './crazyCrates.js';
+import { buildExcellentCratesYaml } from './specializedConverter.js';
 import { deflateRawSync } from 'node:zlib';
 
 // Líneas de `b` que no están en la misma posición en `a`
@@ -429,6 +431,56 @@ assert.equal(pechera.displayName, '#EB633APechera');
 assert.deepEqual(rewardItem(pechera), { material: 'minecraft:leather_chestplate', amount: 1, cmd: 1002, itemModel: null, skin: null, glint: false });
 assert.equal(withPluginItem({ ...pechera, name: '&aPropio', displayName: '&aPropio' }, mmo).displayName, '&aPropio', 'un Name propio gana');
 assert.deepEqual(rewardItem({ type: 'COMMAND', previewData: { type: 'CUSTOM', handler: 'Nexo', itemId: 'coin', amount: 2 } }), { material: 'custom', amount: 2, itemModel: 'nexo:coin' });
+
+// ---------- CrazyCrates -> 6.3.3 ----------
+
+// MiscUtils.calculateWeight de CrazyCrates: (Chance / MaxRange) × 100 a un decimal, MaxRange tope 100000
+assert.equal(crazyWeight(60, 100), 60);
+assert.equal(crazyWeight(1, 3), 33.3);
+assert.equal(crazyWeight(50, 1000000), 0.1, 'con el tope de 100000 (sin él daría 0)');
+const CRAZY = `Crate:
+  CrateType: QuickCrate
+  CrateName: <red>Caja
+  RequiredKeys: 1
+  Item: ENDER_CHEST
+  Lore:
+    - <gray>linea
+  Prize-Commands:
+    - say default %player%
+  PhysicalKey:
+    Name: Llave
+    Item: TRIPWIRE_HOOK
+  Prizes:
+    '1':
+      DisplayName: <green>$1M Dinero
+      DisplayItem: SUNFLOWER
+      DisplayAmount: 2
+      Chance: 60
+      MaxRange: 100
+      Commands:
+        - eco give %player% 1000000
+    '2':
+      DisplayName: <gray>Tapado
+      Chance: 5
+    '2':
+      DisplayName: ᴘʀᴇᴍɪᴏ
+      Glowing: true
+      Settings:
+        Custom-Model-Data: 1002
+`;
+assert.ok(isCrazyCrate(CRAZY) && !isCrazyCrate(SRC));
+const crazy = parseCrazyCrate(CRAZY);
+// id repetido: como en el plugin, gana el último (sin Chance/MaxRange: 10/100 del migrador = peso 10)
+assert.deepEqual(crazy.rewards.map((r) => [r.key, r.weight]), [['1m_dinero', 60], ['premio_2', 10]]);
+assert.ok(crazy.warnings.some((w) => /"2" está 2 veces.*Nunca salían: Tapado/.test(w)), crazy.warnings.join('\n'));
+assert.deepEqual(crazy.rewards.map((r) => r.commands), [['eco give %player_name% 1000000'], ['say default %player_name%']], 'Prize-Commands si el premio no trae');
+assert.equal(crazy.rewards[0].previewData.tagValue, '{count:2,id:"minecraft:sunflower"}');
+assert.equal(crazy.rewards[1].previewData.tagValue, '{components:{"minecraft:custom_model_data":{floats:[1002.0f]},"minecraft:enchantment_glint_override":1b},count:1,id:"minecraft:red_terracotta"}');
+const crazyModel = loadCrateFile(buildExcellentCratesYaml(crazy)).model;
+assert.equal(crazyModel.format, V633);
+assert.deepEqual(crazyModel.rewards.map((r) => r.weight), [60, 10]);
+assert.match(crazyModel.itemProvider.tagValue, /minecraft:ender_chest/);
+assert.equal(loadCrateFile(convertCrate(buildExcellentCratesYaml(crazy)).text).model.format, V661, 'y de ahí a 6.6.1');
 
 // ---------- Crates reales (opcional) ----------
 

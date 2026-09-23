@@ -98,6 +98,8 @@ export function CrateProvider({ children }) {
   const [server, setServer] = useState(null); // carpeta plugins/ExcellentCrates abierta
   const [preview, setPreview] = useState(null); // menú de preview abierto: { name, text }
   const [previewHistory, setPreviewHistory] = useState([]);
+  const [opening, setOpening] = useState(null); // animación abierta: { name, text }
+  const [openingHistory, setOpeningHistory] = useState([]);
 
   // Texturas y fuente de Minecraft del .jar del usuario (ver mcAssets.js)
   const [mcAssets, setMcAssets] = useState(null);
@@ -332,6 +334,46 @@ export function CrateProvider({ children }) {
     setPreviewHistory(previewHistory.slice(0, -1));
   }, [preview, previewHistory, applyPreview]);
 
+  // Animaciones de apertura (openings/inventory/*.yml): igual que los previews.
+  const openOpening = useCallback((name, src) => {
+    try {
+      parseYaml(src);
+    } catch (e) {
+      setError(e.message || String(e));
+      return;
+    }
+    setOpening({ name, text: src });
+    setOpeningHistory([]);
+    setError(null);
+  }, []);
+
+  const applyOpening = useCallback((name, next) => {
+    setOpening({ name, text: next });
+    setServer((s) => (s ? { ...s, openings: { ...s.openings, [name]: next } } : s));
+  }, []);
+
+  const editOpening = useCallback((fn) => {
+    if (!opening) return;
+    let next;
+    try {
+      next = editCrateText(opening.text, fn);
+      parseYaml(next);
+    } catch (e) {
+      setError(e.message || String(e));
+      return;
+    }
+    if (next === opening.text) return;
+    setOpeningHistory((h) => [...h.slice(-49), opening.text]);
+    applyOpening(opening.name, next);
+    setError(null);
+  }, [opening, applyOpening]);
+
+  const undoOpening = useCallback(() => {
+    if (!opening || openingHistory.length === 0) return;
+    applyOpening(opening.name, openingHistory[openingHistory.length - 1]);
+    setOpeningHistory(openingHistory.slice(0, -1));
+  }, [opening, openingHistory, applyOpening]);
+
   const validation = useMemo(() => {
     if (!model) return null;
     const pool = validatePool(model.rewards, targetTotal, rarityWeights);
@@ -397,6 +439,17 @@ export function CrateProvider({ children }) {
       seq: (path, values) => editPreview((d) => setStringSeq(d, path, values)),
       node: (path, obj) => editPreview((d) => setNode(d, path, obj)),
       del: (path) => editPreview((d) => deleteField(d, path)),
+    },
+    opening,
+    openOpening,
+    closeOpening: () => setOpening(null),
+    canUndoOpening: openingHistory.length > 0,
+    undoOpening,
+    openingEdit: {
+      set: (path, v) => editOpening((d) => setField(d, path, v)),
+      seq: (path, values) => editOpening((d) => setStringSeq(d, path, values)),
+      node: (path, obj) => editOpening((d) => setNode(d, path, obj)),
+      del: (path) => editOpening((d) => deleteField(d, path)),
     },
   };
 

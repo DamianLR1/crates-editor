@@ -13,6 +13,7 @@ import {
   readPreview, layoutSlots, parseSlots, formatSlots, toggleSlot, menuShape, applyEmptyLines, fillText,
   renderRewardLore, rewardVars, rewardLimit, rewardItem, skinFromTag, readMmoItems, withPluginItem,
 } from './previewMenu.js';
+import { readOpening, createOpening, openingDuration, openingIssues, formatStep } from './openingMenu.js';
 import { readZip, resolveItem, refPath } from './mcAssets.js';
 import { parseMcText, parseMcTextWithGradients, stripMcCodes } from './mcText.js';
 import { parseCrazyCrate, isCrazyCrate, crazyWeight } from './crazyCrates.js';
@@ -485,6 +486,102 @@ assert.match(crazyModel.itemProvider.tagValue, /minecraft:ender_chest/);
 assert.equal(loadCrateFile(convertCrate(buildExcellentCratesYaml(crazy)).text).model.format, V661, 'y de ahí a 6.6.1');
 
 // ---------- Crates reales (opcional) ----------
+
+// ---------- Openings: lectura y simulación de la animación ----------
+
+const OPENING = `Settings:
+  Menu_Type: generic_9x3
+  Title: test
+  WinSlots: '13'
+  Max_Ticks_To_Skip: 40
+  Completion_Pause_Ticks: 2
+  RunOnLaunch:
+    REWARD:
+      main:
+        SpinnerId: normal
+        Mode: SEQUENTAL
+        Slots: 11,12,13
+        SpinDelay: 0
+        Spins:
+        - '3:2'
+    ANIMATION:
+      blink:
+        SpinnerId: pulse
+        Mode: SYNCRHONIZED
+        Slots: 0,1
+        SpinDelay: 3
+        Spins:
+        - '2:5'
+Content:
+  Default:
+    borde:
+      Item:
+        Material: minecraft:black_stained_glass_pane
+        Hide_Tooltip: true
+      Slots: 0,8
+Spinners:
+  ANIMATION:
+    pulse:
+      Items:
+        brillo:
+          Chance: 1.0
+          Material: minecraft:lime_stained_glass_pane
+  REWARD:
+    normal:
+      Rarities:
+      - '*'
+`;
+
+const opening = readOpening(OPENING);
+assert.equal(opening.menuType, 'generic_9x3');
+assert.deepEqual(opening.winSlots, [13]);
+assert.equal(opening.runs.length, 2);
+const mainRun = opening.runs.find((r) => r.id === 'main');
+assert.equal(mainRun.type, 'REWARD');
+assert.deepEqual(mainRun.slots, [11, 12, 13]);
+assert.deepEqual(mainRun.steps, [{ spins: 3, interval: 2 }]);
+assert.equal(opening.runs.find((r) => r.id === 'blink').spinDelay, 3);
+assert.deepEqual(opening.content.map((c) => c.slots), [[0, 8]]);
+assert.equal(opening.content[0].hideTooltip, true);
+assert.equal(opening.spinners.ANIMATION.pulse.items.length, 1);
+assert.deepEqual(opening.spinners.REWARD.normal.rarities, ['*']);
+assert.equal(formatStep({ spins: 3, interval: 2 }), '3:2');
+
+const rewardFixture = (key) => ({
+  key, type: 'ITEM', rarity: 'common', weight: 10, displayName: key, description: [],
+  itemsData: [{ type: 'VANILLA', tagValue: '{id:"minecraft:diamond",count:1}' }],
+});
+const simRewards = [rewardFixture('uno'), rewardFixture('dos')];
+const simWeights = { common: 100 };
+const half = () => 0.5;
+
+// El SpinDelay se come ticks pero el reloj sigue corriendo: con retraso 3 e intervalo 5
+// el primer giro cae en el tick 5, no apenas termina el retraso (igual que AbstractSpinner).
+const timing = createOpening(opening, { rewards: simRewards, rarityWeights: simWeights, random: half });
+for (let i = 0; i < 5; i++) timing.tick();
+assert.equal(timing.cells[1], null, 'el spinner con retraso giró antes de tiempo');
+timing.tick();
+assert.equal(timing.cells[1]?.source, 'brillo', 'el primer giro tiene que caer en el tick 5');
+
+// El premio reservado entra por el primer slot y tiene que quedar en el ganador al terminar.
+const sim = createOpening(opening, { rewards: simRewards, rarityWeights: simWeights, random: half });
+let simTicks = 0;
+while (!sim.isDone() && simTicks < 200) {
+  sim.tick();
+  simTicks++;
+}
+assert.equal(sim.won.length, 1, 'un slot ganador -> un premio reservado');
+assert.equal(sim.cells[13]?.source, `reward ${sim.won[0].key}`, 'el premio no quedó en el slot ganador');
+assert.equal(simTicks, openingDuration(opening), 'openingDuration no coincide con la corrida real');
+
+// Avisos: spinner inexistente y un giro de premios que no pasa por ningún slot ganador.
+const broken = readOpening(OPENING.replace('SpinnerId: normal', 'SpinnerId: noexiste').replace('Slots: 11,12,13', 'Slots: 11,12'));
+const openingProblems = openingIssues(broken).join(' | ');
+assert.match(openingProblems, /no existe en Spinners\.REWARD/);
+assert.match(openingProblems, /no pasa por ningún slot ganador/);
+assert.equal(openingIssues(opening).length, 0, 'el opening de ejemplo no debería tener avisos');
+// YAML 1.1, igual que SnakeYAML en el server: un id sin comillas "on" se lee como el booleano true.assert.equal(readOpening(OPENING.replace('        brillo:', '        on:')).spinners.ANIMATION.pulse.items[0].id, 'true');
+console.log('ok openings');
 
 const LEGACY_KEYS = /^(Key|Opening):|^\s+(Win_Limit|Tag|Handler|ItemId):|^\s+Type: (VANILLA|CUSTOM)\s*$/m;
 const sortedKeys = (_, v) => (v && typeof v === 'object' && !Array.isArray(v)

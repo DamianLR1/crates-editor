@@ -27,12 +27,15 @@ export async function readServerFolder(fileList) {
   }
   const keys = await readAll(/^keys\/([^/]+\.ya?ml)$/i);
   const previews = await readAll(/^previews\/([^/]+\.ya?ml)$/i);
+  // Sólo las de openings/inventory: son las que tienen animación y las que edita el editor de openings.
+  const openings = await readAll(/^openings\/inventory\/([^/]+\.ya?ml)$/i);
   const idsOf = (files) => Object.keys(files).map((name) => name.replace(/\.ya?ml$/i, '').toLowerCase()).sort();
 
   const server = {
     crates,
     keys,
     previews,
+    openings,
     formats: Object.fromEntries(Object.entries(crates).map(([name, text]) => [name, safeFormat(text)])),
     keyIds: idsOf(keys),
     previewIds: idsOf(previews),

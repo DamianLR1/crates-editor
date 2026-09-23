@@ -41,6 +41,27 @@ export function parseSlots(value) {
 export const formatSlots = (slots) => slots.join(',');
 export const toggleSlot = (slots, slot) => (slots.includes(slot) ? slots.filter((s) => s !== slot) : [...slots, slot]);
 
+/**
+ * Ítem "cosmético" de nightcore (Material, Display_Name, Lore, Model.Data...).
+ * `get(path, fallback)` lee del YAML y `base` es dónde vive el ítem: los del menú
+ * cuelgan de Item, los de un spinner de opening están sueltos bajo su id.
+ */
+export function readCosmeticItem(get, base) {
+  const field = (key, fallback) => get([...base, key], fallback);
+  const lore = field('Lore', []);
+  return {
+    material: String(field('Material', 'minecraft:stone')),
+    amount: Number(field('Amount', 1)) || 1,
+    displayName: field('Display_Name') ?? field('Item_Name') ?? field('Name') ?? null, // Name: formato viejo de nightcore
+    lore: Array.isArray(lore) ? lore.map((line) => String(line ?? '')) : [],
+    hideTooltip: field('Hide_Tooltip', false) === true,
+    glint: field('Enchant_Glint', false) === true,
+    skinUrl: field('SkinURL') ?? null,
+    // Model.Data en nightcore nuevo, Custom_Model_Data en el viejo: el modelo del resource pack
+    modelData: Number(get([...base, 'Model', 'Data'], field('Custom_Model_Data'))) || null,
+  };
+}
+
 export function readPreview(text) {
   const doc = parseYaml(text);
   const get = (path, fallback) => {
@@ -69,21 +90,12 @@ export function readPreview(text) {
     },
     content: (isMap(content) ? content.items : []).map((pair) => {
       const id = String(isScalar(pair.key) ? pair.key.value : pair.key);
-      const item = (key, fallback) => get(['Content', id, 'Item', key], fallback);
       return {
         id,
         priority: Number(get(['Content', id, 'Priority'], 0)) || 0,
         slots: parseSlots(get(['Content', id, 'Slots'], '')),
         type: String(get(['Content', id, 'Type'], 'null')),
-        material: String(item('Material', 'minecraft:stone')),
-        amount: Number(item('Amount', 1)) || 1,
-        displayName: item('Display_Name') ?? item('Item_Name') ?? item('Name') ?? null, // Name: formato viejo de nightcore
-        lore: lines(['Content', id, 'Item', 'Lore']),
-        hideTooltip: item('Hide_Tooltip', false) === true,
-        glint: item('Enchant_Glint', false) === true,
-        skinUrl: item('SkinURL') ?? null,
-        // Model.Data en nightcore nuevo, Custom_Model_Data en el viejo: el modelo del resource pack
-        modelData: Number(get(['Content', id, 'Item', 'Model', 'Data'], item('Custom_Model_Data'))) || null,
+        ...readCosmeticItem(get, ['Content', id, 'Item']),
         hasClickCommands: doc.hasIn(['Content', id, 'Click_Commands']),
       };
     }),

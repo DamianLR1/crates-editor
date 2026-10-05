@@ -48,7 +48,7 @@ Formato verificado contra el source del fork 6.3.3 y el de 6.6.1 que usa el serv
 
 ## Importar desde otros plugins
 
-En la pantalla de inicio, *Convertir desde CrazyCrates o SpecializedCrates* toma uno o varios `.yml` de esos plugins (se detecta solo cuál es) y genera, para la versión de ExcellentCrates que elijas, `crates/<id>.yml` y su llave `keys/<id>.yml`. Se guardan en una carpeta (Chrome/Edge) o se descargan; las de 6.x también se pueden abrir en el editor.
+En la pantalla de inicio, *Convertir desde CrazyCrates o SpecializedCrates* toma uno o varios `.yml` de esos plugins (se detecta solo cuál es) y genera, para la versión de ExcellentCrates que elijas, `crates/<id>.yml` y su llave `keys/<id>.yml` (todas físicas o todas virtuales, a elección). Se guardan en una carpeta (Chrome/Edge) o se descargan; las de 6.x también se pueden abrir en el editor.
 
 | Destino | Server | Notas |
 |---|---|---|

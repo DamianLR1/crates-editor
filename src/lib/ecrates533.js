@@ -129,11 +129,11 @@ function rewardOf(r) {
 }
 
 /** keys/<id>.yml de 5.3.3: el ítem como Material/Name/Lore (no codificado). */
-export function buildKey533(parsed) {
+export function buildKey533(parsed, virtual = false) {
   const name = toNight26(parsed.keyName ?? parsed.crateName);
   return stringify({
     Name: name,
-    Virtual: false,
+    Virtual: virtual,
     Item: { Material: String(parsed.keyMaterial ?? 'TRIPWIRE_HOOK').toUpperCase(), Name: name, Lore: (parsed.keyLore ?? []).map(toNight26) },
   }, STRINGIFY_OPTIONS);
 }

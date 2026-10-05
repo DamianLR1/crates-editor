@@ -13,8 +13,9 @@ export const TARGETS = [['5.3.3', '5.3.3 · server 1.20.4'], ['6.3.3', '6.3.3'],
 /**
  * -> { source, id, target, rewards, total, warnings, files: [{ dir, name, text }], editable }
  * editable: el texto de la crate cuando el editor la puede abrir (6.x); si no, null.
+ * options.virtualKeys: llaves virtuales (se dan por comando, sin ítem) en vez de físicas.
  */
-export function importCrate(fileName, text, target) {
+export function importCrate(fileName, text, target, { virtualKeys = false } = {}) {
   const parsed = isCrazyCrate(text) ? parseCrazyCrate(text) : parseSpecializedCrate(text);
   const id = idOf(fileName);
   const warnings = [...parsed.warnings];
@@ -22,10 +23,10 @@ export function importCrate(fileName, text, target) {
   let key;
   if (target === V533) {
     crate = buildCrate533(parsed, id);
-    key = buildKey533(parsed);
+    key = buildKey533(parsed, virtualKeys);
   } else {
     crate = buildExcellentCratesYaml(parsed, { crateId: id });
-    key = key633(parsed);
+    key = key633(parsed, virtualKeys);
     if (target === '6.6.1') {
       const converted = convertCrate(crate);
       crate = converted.text;
@@ -46,9 +47,9 @@ export function importCrate(fileName, text, target) {
 }
 
 /** Llave de 6.3.3 (la crate la busca por su id en Key.Ids). */
-const key633 = (parsed) => stringify({
+const key633 = (parsed, virtual) => stringify({
   Name: String(parsed.keyName ?? parsed.crateName),
-  Virtual: false,
+  Virtual: virtual,
   ItemData: {
     Type: 'VANILLA',
     Tag: { Value: `{count:1,id:"minecraft:${String(parsed.keyMaterial ?? 'tripwire_hook').toLowerCase()}"}`, DataVersion: DATA_VERSION },

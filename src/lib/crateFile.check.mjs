@@ -553,6 +553,11 @@ assert.deepEqual(crate533.Rewards.List['1m_dinero'].Commands, crazy.rewards[0].c
 const preview533 = readPreviewNbt(crate533.Rewards.List['1m_dinero'].Preview);
 assert.deepEqual([preview533.id, preview533.Count, preview533.tag.display.Name], ['minecraft:sunflower', 2, jsonText('<green>$1M Dinero')]);
 assert.deepEqual(parse(to533.files[1].text), { Name: '<#ffffff>Llave', Virtual: false, Item: { Material: 'TRIPWIRE_HOOK', Name: '<#ffffff>Llave', Lore: [] } });
+// todas las llaves virtuales, en cada versión
+for (const target of ['5.3.3', '6.3.3', '6.6.1']) {
+  assert.equal(parse(importCrate('Mi Caja.yml', CRAZY, target, { virtualKeys: true }).files[1].text).Virtual, true, target);
+  assert.equal(parse(importCrate('Mi Caja.yml', CRAZY, target).files[1].text).Virtual, false, `${target}: físicas por defecto`);
+}
 
 const to633 = importCrate('Mi Caja.yml', CRAZY, '6.3.3');
 assert.equal(loadCrateFile(to633.editable).model.format, V633);

@@ -10,6 +10,7 @@ const selectCls = 'bg-ink-800 border border-ink-600 rounded-lg px-2 py-1 text-xs
 export default function ImportPanel() {
   const { openImported } = useCrate();
   const [target, setTarget] = useState('6.3.3');
+  const [virtualKeys, setVirtualKeys] = useState(false);
   const [results, setResults] = useState(null);
   const [saved, setSaved] = useState(null);
   const inputRef = useRef(null);
@@ -20,7 +21,7 @@ export default function ImportPanel() {
     setSaved(null);
     setResults(await Promise.all(files.map(async (file) => {
       try {
-        return { fileName: file.name, ...importCrate(file.name, await file.text(), target) };
+        return { fileName: file.name, ...importCrate(file.name, await file.text(), target, { virtualKeys }) };
       } catch (e) {
         return { fileName: file.name, error: e.message || String(e) };
       }
@@ -45,6 +46,16 @@ export default function ImportPanel() {
         >
           {TARGETS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
         </select>
+        <select
+          value={virtualKeys ? 'virtual' : 'fisica'}
+          onChange={(e) => { setVirtualKeys(e.target.value === 'virtual'); setResults(null); }}
+          className={selectCls}
+          aria-label="Tipo de llaves"
+          title="Físicas: un ítem que se usa en el bloque. Virtuales: se dan por comando y quedan guardadas en el jugador."
+        >
+          <option value="fisica">con llaves físicas</option>
+          <option value="virtual">con llaves virtuales</option>
+        </select>
         <button onClick={() => inputRef.current.click()} className="underline hover:text-gold-400 transition-colors">
           Elegir archivos…
         </button>
@@ -63,7 +74,7 @@ export default function ImportPanel() {
         <div className="mt-4 rounded-xl border border-ink-700 bg-ink-900 p-4 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-parch-200">
-              {ok.length} de {results.length} crate(s) convertida(s) a {target}: {ok.length * 2} archivos en crates/ y keys/.
+              {ok.length} de {results.length} crate(s) convertida(s) a {target}, con llaves {virtualKeys ? 'virtuales' : 'físicas'}: {ok.length * 2} archivos en crates/ y keys/.
             </p>
             {ok.length > 0 && (
               <Button icon={FolderDown} onClick={save}>{window.showDirectoryPicker ? 'Guardar en una carpeta…' : 'Descargar archivos'}</Button>

@@ -59,6 +59,7 @@ export function parseCrazyCrate(text) {
     if (prize.Tiers) warnings.push(`${label}: los Tiers (cajas Cosmic/Casino) no existen en ExcellentCrates.`);
     if (!commands.length && !crateCommands.length) warnings.push(`${label}: no tiene comandos, así que no entrega nada.`);
 
+    const display = displayOf(prize);
     rewards.push({
       key: uniqueKey(plain(name), id, used),
       weight,
@@ -66,14 +67,16 @@ export function parseCrazyCrate(text) {
       name,
       description: list(prize.Lore ?? prize.DisplayLore).map((l) => String(l)),
       commands: commands.length ? commands : crateCommands, // CrazyCrates cae en Prize-Commands si el premio no trae
-      previewData: { type: 'VANILLA', tagValue: tagValueOf(prize), tagDataVersion: DATA_VERSION },
+      display, // el ítem como datos: 6.x lo escribe como SNBT y 5.3.3 como NBT codificado
+      previewData: { type: 'VANILLA', tagValue: tagValueOf(display), tagDataVersion: DATA_VERSION },
     });
   }
   if (!rewards.length) throw new Error('La crate de CrazyCrates no tiene premios en "Prizes".');
 
   const key = root.PhysicalKey;
-  if (key) warnings.push(`La llave (${plain(String(key.Name ?? ''))} · ${String(key.Item ?? 'TRIPWIRE_HOOK')}) no se convierte sola: creá su archivo en keys/ y ponela en Key.Ids.`);
-  if (root.CrateType) warnings.push(`El tipo de caja "${root.CrateType}" no tiene equivalente: ExcellentCrates usa sus propias animaciones (Animation.Id).`);
+  const type = String(root.CrateType ?? 'QuickCrate');
+  const animation = ANIMATIONS[type.toLowerCase()];
+  if (animation === undefined) warnings.push(`El tipo de caja "${type}" no tiene equivalente: quedó con la animación csgo.`);
   if (root['opening-command']?.toggle === true) warnings.push('Los comandos al abrir (opening-command) no existen en 6.3.3; en 6.6.1 serían Post-Open.Commands.');
   if (root.Preview?.Toggle === false) warnings.push('La preview estaba apagada en CrazyCrates; en la crate convertida queda encendida.');
   if (root.Tiers) warnings.push('Los Tiers (Cosmic/Casino) no se convirtieron: ExcellentCrates sortea por rareza.');
@@ -83,9 +86,13 @@ export function parseCrazyCrate(text) {
     crateName: String(root.CrateName ?? root.Name ?? 'Crate convertida'),
     description: list(root.Lore).map((l) => String(l)),
     itemMaterial: material(root.Item ?? 'chest'),
+    animation: animation === undefined ? 'csgo' : animation,
+    previewId: 'default',
     keyMaterial: key?.Item ?? null,
     keyName: key?.Name ?? null,
-    keyRequire: num(root.RequiredKeys, 0) > 0,
+    keyLore: list(key?.Lore).map((l) => String(l)),
+    // en CrazyCrates abrir siempre gasta una llave; RequiredKeys es un mínimo extra (crate_use_required_keys)
+    keyRequire: true,
     hologramEnabled: root.Hologram?.Toggle === true,
     hologramLines: list(root.Hologram?.Message).map((l) => String(l)),
     hologramYOffset: num(root.Hologram?.Height, 0),
@@ -95,16 +102,27 @@ export function parseCrazyCrate(text) {
   };
 }
 
-/** Preview del premio: DisplayItem + DisplayAmount, con model data, item model y brillo si los trae. */
-function tagValueOf(prize) {
-  const components = [];
-  const cmd = num(prize.Settings?.['Custom-Model-Data'], null);
-  if (cmd != null) components.push(`"minecraft:custom_model_data":{floats:[${cmd.toFixed(1)}f]}`);
+// Tipo de caja de CrazyCrates -> animación de ExcellentCrates (null: abre al instante, como QuickCrate)
+const ANIMATIONS = { quickcrate: null, crateonthego: null, firecracker: null, csgo: 'csgo', roulette: 'roulette', wheel: 'roulette', casino: 'roulette' };
+
+/** Ítem de preview del premio: DisplayItem y DisplayAmount, con model data, item model y brillo si los trae. */
+function displayOf(prize) {
   const model = prize.Settings?.Model;
-  if (model?.Id) components.push(`"minecraft:item_model":"${model.Namespace || 'minecraft'}:${model.Id}"`);
-  if (prize.Glowing === true) components.push('"minecraft:enchantment_glint_override":1b');
-  const amount = Math.max(1, Math.trunc(num(prize.DisplayAmount, 1)));
-  const id = material(prize.DisplayItem ?? 'red_terracotta'); // el default del propio plugin
+  return {
+    material: material(prize.DisplayItem ?? 'red_terracotta'), // el default del propio plugin
+    amount: Math.max(1, Math.trunc(num(prize.DisplayAmount, 1))),
+    cmd: num(prize.Settings?.['Custom-Model-Data'], null),
+    itemModel: model?.Id ? `${model.Namespace || 'minecraft'}:${model.Id}` : null,
+    glint: prize.Glowing === true,
+  };
+}
+
+/** SNBT de 1.21.4 (ExcellentCrates 6.x). */
+function tagValueOf({ material: id, amount, cmd, itemModel, glint }) {
+  const components = [];
+  if (cmd != null) components.push(`"minecraft:custom_model_data":{floats:[${cmd.toFixed(1)}f]}`);
+  if (itemModel) components.push(`"minecraft:item_model":"${itemModel}"`);
+  if (glint) components.push('"minecraft:enchantment_glint_override":1b');
   return `{${components.length ? `components:{${components.join(',')}},` : ''}count:${amount},id:"minecraft:${id}"}`;
 }
 

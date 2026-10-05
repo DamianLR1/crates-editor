@@ -48,9 +48,15 @@ Formato verificado contra el source del fork 6.3.3 y el de 6.6.1 que usa el serv
 
 ## Importar desde otros plugins
 
-En la pantalla de inicio, *Convertir desde CrazyCrates o SpecializedCrates* abre un `.yml` de esos plugins (se detecta solo cuál es) y lo convierte a una crate de ExcellentCrates 6.3.3, que después se puede pasar a 6.6.1 con el conversor.
+En la pantalla de inicio, *Convertir desde CrazyCrates o SpecializedCrates* toma uno o varios `.yml` de esos plugins (se detecta solo cuál es) y genera, para la versión de ExcellentCrates que elijas, `crates/<id>.yml` y su llave `keys/<id>.yml`. Se guardan en una carpeta (Chrome/Edge) o se descargan; las de 6.x también se pueden abrir en el editor.
 
-- **CrazyCrates**: `Chance`/`MaxRange` pasan a `Weight` con la misma fórmula que usa el plugin para migrarlos (`(Chance / MaxRange) × 100`, un decimal, `MaxRange` tope 100000), así el reparto de probabilidades es el mismo. Se llevan nombre, lore, ítem y cantidad de preview (con `Custom-Model-Data`, `Model` y `Glowing`), comandos (`%player%` → `%player_name%`, y `Prize-Commands` si el premio no trae) y el ítem, la descripción y el holograma de la caja. Si un id de premio está repetido, gana el último igual que en el plugin, y se avisa cuáles nunca salían. La llave, el tipo de caja (animaciones), `Items`, `Messages` y `Tiers` no tienen equivalente directo y quedan como aviso.
+| Destino | Server | Notas |
+|---|---|---|
+| **5.3.3** | 1.20.4 (nightcore 2.6.4) | El ítem de preview va codificado como en el plugin: el NBT del ItemStack de 1.20.4, sin comprimir, escrito en base 32. El nombre y la lore van adentro del ítem en JSON, porque el menú de 5.3.3 los muestra desde ahí. El texto pasa a `<#hex>` y `<b>`, porque nightcore 2.6.4 no tiene `<dark_green>`, `<bold>` ni `<gold>`. El editor no abre 5.3.3: sólo lo genera. |
+| **6.3.3** | 1.21.4 | Preview en SNBT con componentes. |
+| **6.6.1** | 1.21.4 | La de 6.3.3 pasada por el conversor. |
+
+- **CrazyCrates**: `Chance`/`MaxRange` pasan a `Weight` con la misma fórmula que usa el plugin para migrarlos (`(Chance / MaxRange) × 100`, un decimal, `MaxRange` tope 100000), así el reparto de probabilidades es el mismo. Se llevan nombre, lore, ítem y cantidad de preview (con `Custom-Model-Data`, `Model` y `Glowing`), comandos (`%player%` → `%player_name%`, y `Prize-Commands` si el premio no trae), el ítem, la descripción y el holograma de la caja, y la llave física (`PhysicalKey`). Siempre se pide llave para abrir, como en CrazyCrates (`RequiredKeys` es un mínimo extra, no si hace falta llave). `QuickCrate` abre al instante (sin animación); CSGO/Roulette/Wheel/Casino usan `csgo`/`roulette`. Si un id de premio está repetido, gana el último igual que en el plugin, y se avisa cuáles nunca salían. `Items`, `Messages` y `Tiers` no tienen equivalente directo y quedan como aviso.
 - **SpecializedCrates**: `chance` pasa 1:1 a `Weight`.
 
 ## Correrlo localmente
@@ -87,6 +93,8 @@ src/
     serverContext.js      -> lectura de la carpeta del plugin + validaciones
     specializedConverter.js -> SpecializedCrates -> ExcellentCrates (y el YAML de salida de los importadores)
     crazyCrates.js        -> CrazyCrates -> ExcellentCrates
+    importCrate.js        -> importar a 5.3.3 / 6.3.3 / 6.6.1, con la llave
+    ecrates533.js         -> formato de ExcellentCrates 5.3.3 (servers 1.20.4): NBT del preview, texto de nightcore 2.6.4
     mcText.js             -> texto como nightcore (& / § / hex / tags, esquema de colores)
   store/CrateStore.jsx    -> estado global (el texto YAML es la fuente de verdad)
   components/             -> UI (fields.jsx: inputs y piezas compartidas)

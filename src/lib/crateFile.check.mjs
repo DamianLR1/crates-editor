@@ -18,6 +18,9 @@ import { readZip, resolveItem, refPath } from './mcAssets.js';
 import { parseMcText, parseMcTextWithGradients, stripMcCodes } from './mcText.js';
 import { parseCrazyCrate, isCrazyCrate, crazyWeight } from './crazyCrates.js';
 import { buildExcellentCratesYaml } from './specializedConverter.js';
+import { encodeItem, jsonText, toNight26 } from './ecrates533.js';
+import { importCrate } from './importCrate.js';
+import { parse } from 'yaml';
 import { deflateRawSync } from 'node:zlib';
 
 // Líneas de `b` que no están en la misma posición en `a`
@@ -484,6 +487,69 @@ assert.equal(crazyModel.format, V633);
 assert.deepEqual(crazyModel.rewards.map((r) => r.weight), [60, 10]);
 assert.match(crazyModel.itemProvider.tagValue, /minecraft:ender_chest/);
 assert.equal(loadCrateFile(convertCrate(buildExcellentCratesYaml(crazy)).text).model.format, V661, 'y de ahí a 6.6.1');
+
+// ---------- Importar a 5.3.3 (server 1.20.4) / 6.3.3 / 6.6.1 ----------
+
+// lector mínimo de NBT (los tipos que escribe encodeItem) para revisar el Preview codificado de 5.3.3
+function readPreviewNbt(encoded) {
+  let n = 0n;
+  for (const ch of encoded) n = n * 32n + BigInt(parseInt(ch, 32));
+  const hex = n.toString(16);
+  const b = Buffer.from(hex.length % 2 ? `0${hex}` : hex, 'hex');
+  let p = 0;
+  const str = () => { const len = b.readUInt16BE(p); p += 2 + len; return b.subarray(p - len, p).toString('utf8'); }; // BMP: igual que UTF-8 modificado
+  const val = (t) => {
+    if (t === 1) return b[p++];
+    if (t === 2) { p += 2; return b.readInt16BE(p - 2); }
+    if (t === 3) { p += 4; return b.readInt32BE(p - 4); }
+    if (t === 8) return str();
+    if (t === 9) { const et = b[p++]; const len = b.readInt32BE(p); p += 4; return Array.from({ length: len }, () => val(et)); }
+    const o = {};
+    for (let tt; (tt = b[p++]) !== 0;) { const k = str(); o[k] = val(tt); }
+    return o;
+  };
+  assert.equal(b[p++], 10, 'compound raíz');
+  str();
+  const value = val(10);
+  assert.equal(p, b.length, 'sin bytes de más');
+  return value;
+}
+
+assert.equal(toNight26('<dark_green>$1 <bold>X'), '<#00aa00>$1 <r><#00aa00><b>X', 'nightcore 2.6.4 no tiene dark_green ni bold');
+assert.equal(jsonText('<dark_green>A'), '{"text":"","extra":[{"text":"A","color":"#00aa00","italic":false}]}');
+assert.deepEqual(readPreviewNbt(encodeItem({ material: 'sunflower', amount: 2, name: '<gold>Ñᴇ', lore: ['<gray>l'], cmd: 1002, glint: true })), {
+  id: 'minecraft:sunflower',
+  Count: 2,
+  tag: {
+    display: { Name: jsonText('<gold>Ñᴇ'), Lore: [jsonText('<gray>l')] },
+    CustomModelData: 1002,
+    Enchantments: [{ id: 'minecraft:unbreaking', lvl: 1 }],
+    HideFlags: 1,
+  },
+});
+
+const to533 = importCrate('Mi Caja.yml', CRAZY, '5.3.3');
+assert.deepEqual(to533.files.map((f) => `${f.dir}/${f.name}`), ['crates/mi_caja.yml', 'keys/mi_caja.yml']);
+assert.equal(to533.editable, null, 'el editor no abre 5.3.3');
+const crate533 = parse(to533.files[0].text);
+assert.equal(crate533.Animation_Config, undefined, 'QuickCrate: sin animación, abre al instante');
+assert.equal(crate533.Preview_Config, 'default');
+assert.deepEqual(crate533.Key, { Required: true, Ids: ['mi_caja'] }, 'CrazyCrates siempre pide llave (RequiredKeys es otra cosa)');
+assert.deepEqual(Object.keys(crate533.Rewards.List), ['1m_dinero', 'premio_2']);
+assert.equal(crate533.Rewards.List['1m_dinero'].Name, '<#55ff55>$1M Dinero', '<green> de MiniMessage es #55FF55');
+assert.deepEqual(crate533.Rewards.List['1m_dinero'].Commands, ['eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4']);
+const preview533 = readPreviewNbt(crate533.Rewards.List['1m_dinero'].Preview);
+assert.deepEqual([preview533.id, preview533.Count, preview533.tag.display.Name], ['minecraft:sunflower', 2, jsonText('<green>$1M Dinero')]);
+assert.deepEqual(parse(to533.files[1].text), { Name: '<#ffffff>Llave', Virtual: false, Item: { Material: 'TRIPWIRE_HOOK', Name: '<#ffffff>Llave', Lore: [] } });
+
+const to633 = importCrate('Mi Caja.yml', CRAZY, '6.3.3');
+assert.equal(loadCrateFile(to633.editable).model.format, V633);
+assert.match(to633.editable, /\nAnimation:\n {2}Enabled: false\n/);
+assert.match(to633.editable, /\nKey:\n {2}Required: true\n {2}Ids:\n {2}- mi_caja\n/);
+assert.equal(parse(to633.files[1].text).ItemData.Tag.Value, '{count:1,id:"minecraft:tripwire_hook"}');
+const to661 = importCrate('Mi Caja.yml', CRAZY, '6.6.1');
+assert.equal(loadCrateFile(to661.editable).model.format, V661);
+assert.equal(parse(to661.files[1].text).ItemData.Provider, 'vanilla');
 
 // ---------- Crates reales (opcional) ----------
 

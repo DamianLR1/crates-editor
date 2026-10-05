@@ -31,6 +31,30 @@ export function Datalists() {
   ));
 }
 
+/**
+ * Guarda [{ dir, name, text }] en una carpeta que elige el usuario (Chrome/Edge, con sus subcarpetas)
+ * o, si el navegador no lo permite, los descarga uno por uno. -> { ok, msg }, o null si canceló.
+ */
+export async function saveFiles(files) {
+  const dirs = [...new Set(files.map((f) => f.dir))];
+  if (!window.showDirectoryPicker) {
+    files.forEach((f) => downloadText(`${f.dir}-${f.name}`, f.text));
+    return { ok: true, msg: `Descargados ${files.length} archivos (prefijo ${dirs.map((d) => `${d}-`).join(' / ')}).` };
+  }
+  try {
+    const root = await window.showDirectoryPicker({ mode: 'readwrite' });
+    for (const f of files) {
+      const dir = await root.getDirectoryHandle(f.dir, { create: true });
+      const writable = await (await dir.getFileHandle(f.name, { create: true })).createWritable();
+      await writable.write(f.text);
+      await writable.close();
+    }
+    return { ok: true, msg: `Guardados ${files.length} archivos en "${root.name}" (${dirs.map((d) => `${d}/`).join(' y ')}).` };
+  } catch (e) {
+    return e.name === 'AbortError' ? null : { ok: false, msg: e.message };
+  }
+}
+
 export function downloadText(name, text) {
   const url = URL.createObjectURL(new Blob([text], { type: 'text/yaml' }));
   const a = document.createElement('a');

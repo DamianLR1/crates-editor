@@ -1,22 +1,21 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FilePlus2, Box, ArrowRightLeft, FolderOpen } from 'lucide-react';
+import { UploadCloud, FilePlus2, Box, FolderOpen } from 'lucide-react';
 import { useCrate } from '../store/CrateStore.jsx';
 import { V633, V661 } from '../lib/crateFile.js';
 import { Button, VersionBadge } from './fields.jsx';
+import ImportPanel from './ImportPanel.jsx';
 
 export default function WelcomeScreen() {
-  const { openFile, newBlankFile, convertForeignCrate, openServer, server, switchCrate, error } = useCrate();
+  const { openFile, newBlankFile, openServer, server, switchCrate, error } = useCrate();
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
   const folderRef = useRef(null);
-  const foreignRef = useRef(null);
 
   const readWith = (fn) => (files) => {
     const file = files?.[0];
     file?.text().then((text) => fn(file.name, text));
   };
   const openYaml = readWith(openFile);
-  const openForeign = readWith(convertForeignCrate);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
@@ -64,7 +63,6 @@ export default function WelcomeScreen() {
 
       <input id="folder-input" ref={folderRef} type="file" webkitdirectory="" multiple className="hidden" onChange={(e) => openServer(e.target.files)} />
       <input id="file-input" ref={fileRef} type="file" accept=".yml,.yaml" className="hidden" onChange={(e) => openYaml(e.target.files)} />
-      <input ref={foreignRef} type="file" accept=".yml,.yaml,.crate" className="hidden" onChange={(e) => openForeign(e.target.files)} />
 
       {error && (
         <div className="mt-6 w-full max-w-3xl rounded-lg border border-crimson-500/30 bg-crimson-500/10 px-4 py-3 text-sm text-crimson-400">
@@ -90,13 +88,7 @@ export default function WelcomeScreen() {
         </div>
       )}
 
-      <button
-        onClick={() => foreignRef.current.click()}
-        className="mt-10 inline-flex items-center gap-2 text-xs text-ink-500 hover:text-gold-400 transition-colors"
-      >
-        <ArrowRightLeft className="w-3.5 h-3.5" strokeWidth={1.5} />
-        Convertir desde CrazyCrates o SpecializedCrates
-      </button>
+      <ImportPanel />
     </div>
   );
 }

@@ -103,6 +103,7 @@ function convertSingleReward(doc, node, key, warnings) {
 
   return {
     key: sanitizeKey(key),
+    display: { material: String(material).toLowerCase(), amount: num(amount, 1), cmd: num(customModelData, null), glint: false },
     weight: chance,
     originalChance: chance,
     name,
@@ -200,10 +201,10 @@ ItemStackable: false
 Permission_Required: false
 Preview:
   Enabled: true
-  Id: ${crateId}
+  Id: ${parsed.previewId ?? crateId}
 Animation:
-  Enabled: true
-  Id: ${crateId}
+  Enabled: ${parsed.animation !== null}
+  Id: ${parsed.animation ?? crateId}
 Opening:
   Cooldown: 0
 Key:

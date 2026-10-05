@@ -16,8 +16,6 @@ import {
   V661,
 } from '../lib/crateFile.js';
 import { convertCrate } from '../lib/convert661.js';
-import { parseSpecializedCrate, buildExcellentCratesYaml } from '../lib/specializedConverter.js';
-import { parseCrazyCrate, isCrazyCrate } from '../lib/crazyCrates.js';
 import { validatePool, DEFAULT_RARITY_WEIGHTS } from '../lib/weightMath.js';
 import { readServerFolder, inspectCrate } from '../lib/serverContext.js';
 import {
@@ -215,24 +213,13 @@ export function CrateProvider({ children }) {
     setConversionWarnings(notice);
   }, []);
 
-  /** CrazyCrates o SpecializedCrates (se detecta solo) -> crate de ExcellentCrates 6.3.3. */
-  const convertForeignCrate = useCallback((name, src) => {
-    try {
-      const crazy = isCrazyCrate(src);
-      const parsed = crazy ? parseCrazyCrate(src) : parseSpecializedCrate(src);
-      setTargetTotal(parsed.suggestedTargetTotal || 1000);
-      open(name.replace(/\.(crate|ya?ml)$/i, '') + '.yml', buildExcellentCratesYaml(parsed), {
-        title: `Convertido desde ${name} (${parsed.sourcePlugin}): ${parsed.rewards.length} reward(s), ${crazy
-          ? 'pesos con la fórmula que usa CrazyCrates para migrar Chance/MaxRange'
-          : 'pesos 1:1 desde el chance original'}.`,
-        items: parsed.warnings,
-        note: crazy
-          ? 'La llave, el tipo de caja y los ítems que entrega cada premio no tienen equivalente directo: revisá los avisos.'
-          : 'Los rewards con nbt-tags quedan como preview vanilla; si usabas ítems custom, cargalos a mano.',
-      });
-    } catch (e) {
-      setError(e.message || String(e));
-    }
+  /** Crate importada de otro plugin (importCrate.js, 6.3.3 o 6.6.1) abierta en el editor con sus avisos. */
+  const openImported = useCallback((result) => {
+    setTargetTotal(result.total || 1000);
+    open(`${result.id}.yml`, result.editable, {
+      title: `Convertida desde ${result.source} a ${result.target}: ${result.rewards} reward(s). Su llave va en keys/${result.id}.yml (Guardar en la pantalla de inicio).`,
+      items: result.warnings,
+    });
   }, [open]);
 
   const openServer = useCallback(async (files) => {
@@ -404,7 +391,7 @@ export function CrateProvider({ children }) {
       items: warnings,
     }),
     newBlankFile: (format = V661) => open('nueva_caja.yml', format === V661 ? convertCrate(BLANK_CRATE).text : BLANK_CRATE),
-    convertForeignCrate,
+    openImported,
     conversionWarnings,
     dismissConversionWarnings: () => setConversionWarnings(null),
     updateWeight: (key, weight) => edit((d) => setRewardWeight(d, key, weight)),

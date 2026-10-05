@@ -37,9 +37,16 @@ const DECORATIONS = {
   st: 'strike', strikethrough: 'strike', obf: 'obf', obfuscated: 'obf',
 };
 
-const colorOf = (value) => {
+// Colores de MiniMessage/vanilla (Adventure), los que usan plugins como CrazyCrates
+export const VANILLA_COLORS = {
+  black: '#000000', dark_blue: '#0000AA', dark_green: '#00AA00', dark_aqua: '#00AAAA', dark_red: '#AA0000',
+  dark_purple: '#AA00AA', gold: '#FFAA00', gray: '#AAAAAA', grey: '#AAAAAA', dark_gray: '#555555', dark_grey: '#555555',
+  blue: '#5555FF', green: '#55FF55', aqua: '#55FFFF', red: '#FF5555', light_purple: '#FF55FF', yellow: '#FFFF55', white: '#FFFFFF',
+};
+
+const colorOf = (value, palette = SCHEME) => {
   const v = String(value ?? '').trim().toLowerCase();
-  return /^#[0-9a-f]{6}$/.test(v) ? v.toUpperCase() : SCHEME[v] ?? null;
+  return /^#[0-9a-f]{6}$/.test(v) ? v.toUpperCase() : palette[v] ?? null;
 };
 
 /** Pasa todo a tags, en el mismo orden que nightcore (LegacyColors + wrapHexCodesAsTags). */
@@ -50,7 +57,8 @@ const toTags = (str) => str
   .replace(/(?<![<:])#([0-9a-f]{6})(?!>)/gi, '<#$1>')
   .replace(/&([0-9a-fk-or])/gi, (_, code) => `<${LEGACY[code.toLowerCase()]}>`);
 
-export function parseMcText(input, defaultColor = '#FFFFFF') {
+/** palette: esquema de nightcore por defecto; VANILLA_COLORS para texto de MiniMessage. */
+export function parseMcText(input, defaultColor = '#FFFFFF', palette = SCHEME) {
   if (!input) return [];
   const str = toTags(String(input));
   const base = { color: defaultColor, bold: false, italic: false, underline: false, strike: false, obf: false };
@@ -80,10 +88,10 @@ export function parseMcText(input, defaultColor = '#FFFFFF') {
     if (DECORATIONS[name]) next = { ...state, [DECORATIONS[name]]: true };
     else if (negated) next = { ...state, [negated]: false };
     else if (name === 'gradient') {
-      const stops = arg.split(':').map(colorOf).filter(Boolean);
+      const stops = arg.split(':').map((stop) => colorOf(stop, palette)).filter(Boolean);
       if (stops.length) next = { ...state, color: stops[0], _gradient: stops.length > 1 ? { stops } : undefined };
     } else {
-      const color = colorOf(name.startsWith('#') ? name : ['c', 'color', 'colour'].includes(name) ? arg : name);
+      const color = colorOf(name.startsWith('#') ? name : ['c', 'color', 'colour'].includes(name) ? arg : name, palette);
       if (color) next = { ...state, color, _gradient: undefined };
     }
     // tags desconocidos (<hover>, <click>, <font>, <shift> de Nexo...) no se dibujan
@@ -94,8 +102,8 @@ export function parseMcText(input, defaultColor = '#FFFFFF') {
 }
 
 /** Como parseMcText, pero con los gradientes ya interpolados letra por letra (a lo largo de todo el tag). */
-export function parseMcTextWithGradients(input, defaultColor) {
-  const runs = parseMcText(input, defaultColor);
+export function parseMcTextWithGradients(input, defaultColor, palette) {
+  const runs = parseMcText(input, defaultColor, palette);
   const total = new Map();
   for (const run of runs) if (run._gradient) total.set(run._gradient, (total.get(run._gradient) ?? 0) + [...run.text].length);
   const done = new Map();

@@ -3,7 +3,7 @@ import { ArrowUpCircle, FolderDown, FileDown, Eye, CheckCircle2, AlertTriangle, 
 import { useCrate } from '../store/CrateStore.jsx';
 import { V633, crateFormat } from '../lib/crateFile.js';
 import { convertCrate, convertKey } from '../lib/convert661.js';
-import { Button, Card, downloadText } from './fields.jsx';
+import { Button, Card, downloadText, saveFiles } from './fields.jsx';
 
 const CHANGES = [
   ['Ítems (ItemProvider, PreviewData, ItemsData, ItemData)', 'Type + Tag / Handler + ItemId', 'Provider + Data'],
@@ -54,25 +54,8 @@ export default function ConverterPanel() {
   };
 
   const saveFolder = async () => {
-    const files = folder.filter((f) => !f.error);
-    if (!window.showDirectoryPicker) {
-      // navegadores sin File System Access API: un archivo por descarga
-      files.forEach((f) => downloadText(`${f.dir}-${f.name}`, f.text));
-      setSaveState({ ok: true, msg: `Descargados ${files.length} archivos (prefijo crates-/keys-).` });
-      return;
-    }
-    try {
-      const root = await window.showDirectoryPicker({ mode: 'readwrite' });
-      for (const f of files) {
-        const dir = await root.getDirectoryHandle(f.dir, { create: true });
-        const writable = await (await dir.getFileHandle(f.name, { create: true })).createWritable();
-        await writable.write(f.text);
-        await writable.close();
-      }
-      setSaveState({ ok: true, msg: `Guardados ${files.length} archivos en "${root.name}" (crates/ y keys/).` });
-    } catch (e) {
-      if (e.name !== 'AbortError') setSaveState({ ok: false, msg: e.message });
-    }
+    const result = await saveFiles(folder.filter((f) => !f.error));
+    if (result) setSaveState(result);
   };
 
   const folderWarnings = folder?.reduce((n, f) => n + (f.warnings?.length ?? 0), 0) ?? 0;

@@ -483,14 +483,13 @@ const crazy = parseCrazyCrate(CRAZY);
 // id repetido: como en el plugin, gana el último (sin Chance/MaxRange: 10/100 del migrador = peso 10)
 assert.deepEqual(crazy.rewards.map((r) => [r.key, r.weight]), [['1m_dinero', 60], ['premio_2', 10]]);
 assert.ok(crazy.warnings.some((w) => /"2" está 2 veces.*Nunca salían: Tapado/.test(w)), crazy.warnings.join('\n'));
-// PrizeManager: Prize-Commands siempre, después los del premio y los mensajes (los del premio o, si no
-// tiene, Prize-Message) como tellraw; las líneas vacías no se mandan. %player$ también se corrige.
-const tellrawOf = (msg) => `minecraft:tellraw %player_name% ${jsonText(msg).replaceAll('%player%', '%player_name%')}`;
+// PrizeManager: Prize-Commands siempre y después los del premio (%player$ también se corrige). Messages y
+// Prize-Message no se llevan: ExcellentCrates ya avisa al jugador qué ganó.
 assert.deepEqual(crazy.rewards.map((r) => r.commands), [
-  ['say default %player_name%', 'eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4', tellrawOf('<green>¡%player% ganó <green>$1M Dinero en <red>Caja!')],
-  ['say default %player_name%', tellrawOf('<gray>Ganaste ᴘʀᴇᴍɪᴏ')],
+  ['say default %player_name%', 'eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4'],
+  ['say default %player_name%'],
 ]);
-assert.match(crazy.rewards[0].commands[3], /^minecraft:tellraw %player_name% \{"text":"","extra":\[\{"text":"¡%player_name% ganó ","color":"#55ff55"/);
+assert.ok(!crazy.warnings.some((w) => /Messages/.test(w)), 'sin avisos por Messages');
 assert.ok(crazy.warnings.some((w) => w.includes('%player$')));
 assert.equal(crazy.rewards[0].previewData.tagValue, '{count:2,id:"minecraft:sunflower"}');
 assert.equal(crazy.rewards[1].previewData.tagValue, '{components:{"minecraft:custom_model_data":{floats:[1002.0f]},"minecraft:enchantment_glint_override":1b},count:1,id:"minecraft:red_terracotta"}');

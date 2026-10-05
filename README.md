@@ -52,7 +52,7 @@ En la pantalla de inicio, *Convertir desde CrazyCrates o SpecializedCrates* toma
 
 | Destino | Server | Notas |
 |---|---|---|
-| **5.3.3** | 1.20.4 (nightcore 2.6.4) | El ítem de preview va codificado como en el plugin: el NBT del ItemStack de 1.20.4, sin comprimir, escrito en base 32. El nombre y la lore van adentro del ítem en JSON, porque el menú de 5.3.3 los muestra desde ahí. El texto pasa a `<#hex>` y `<b>`, porque nightcore 2.6.4 no tiene `<dark_green>`, `<bold>` ni `<gold>`. El editor no abre 5.3.3: sólo lo genera. |
+| **5.3.3** | 1.20.4 (nightcore 2.6.4) | El ítem de preview va codificado como en el plugin: el NBT del ItemStack de 1.20.4, sin comprimir, escrito en base 32. El nombre y la lore van adentro del ítem en JSON, porque el menú de 5.3.3 los muestra desde ahí. El texto pasa a `<#hex>` y a los formatos de nightcore 2.6.4 (`<b>`, `<i>`, `<u>`, `<s>` tachado, `<o>` ofuscado), porque no tiene `<dark_green>`, `<bold>`, `<gold>` ni `<obf>`. El editor no abre 5.3.3: sólo lo genera. |
 | **6.3.3** | 1.21.4 | Preview en SNBT con componentes. |
 | **6.6.1** | 1.21.4 | La de 6.3.3 pasada por el conversor. |
 

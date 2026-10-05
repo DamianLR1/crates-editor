@@ -75,11 +75,12 @@ export function jsonText(text) {
 
 /**
  * Texto -> etiquetas que entiende nightcore 2.6.4. No tiene <dark_green>, <bold>, <gold>...: cada tramo
- * va con su color en <#hex> y sus formatos (<b>, <i>, <u>, <st>, <obf>), con <r> entre tramos.
+ * va con su color en <#hex> y sus formatos, con <r> entre tramos. Los formatos de 2.6.4 (su clase Tags) son
+ * <b>, <i>, <u>, <s> (tachado) y <o> (ofuscado): no <st> ni <obf> como en el nightcore de 6.x.
  */
 export const toNight26 = (text) => parseMcText(String(text ?? ''), '#FFFFFF', VANILLA_COLORS)
   .map((r, i) => `${i ? '<r>' : ''}<${r.color.toLowerCase()}>${r.bold ? '<b>' : ''}${r.italic ? '<i>' : ''}`
-    + `${r.underline ? '<u>' : ''}${r.strike ? '<st>' : ''}${r.obf ? '<obf>' : ''}${r.text}`)
+    + `${r.underline ? '<u>' : ''}${r.strike ? '<s>' : ''}${r.obf ? '<o>' : ''}${r.text}`)
   .join('');
 
 // ---- Archivos ----

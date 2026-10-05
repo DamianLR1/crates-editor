@@ -528,6 +528,7 @@ function readPreviewNbt(encoded) {
 }
 
 assert.equal(toNight26('<dark_green>$1 <bold>X'), '<#00aa00>$1 <r><#00aa00><b>X', 'nightcore 2.6.4 no tiene dark_green ni bold');
+assert.equal(toNight26('<green><obfuscated>..<reset><green><bold><underlined>LLAVE<strikethrough>X'), '<#55ff55><o>..<r><#55ff55><b><u>LLAVE<r><#55ff55><b><u><s>X', 'en 2.6.4 ofuscado es <o> y tachado <s>');
 assert.equal(jsonText('<dark_green>A'), '{"text":"","extra":[{"text":"A","color":"#00aa00","italic":false}]}');
 assert.deepEqual(readPreviewNbt(encodeItem({ material: 'sunflower', amount: 2, name: '<gold>Ñᴇ', lore: ['<gray>l'], cmd: 1002, glint: true })), {
   id: 'minecraft:sunflower',

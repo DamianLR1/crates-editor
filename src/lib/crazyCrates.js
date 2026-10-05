@@ -5,6 +5,7 @@
 // (MiscUtils.calculateWeight, la que llama su WeightMigrator), así el reparto queda igual.
 import { parseDocument } from 'yaml';
 import { stripMcCodes } from './mcText.js';
+import { jsonText } from './ecrates533.js';
 
 const DATA_VERSION = 4189;
 const MAX_RANGE = 100000; // tope que aplica el migrador de CrazyCrates
@@ -37,6 +38,8 @@ export function parseCrazyCrate(text) {
       + `Nunca salían: ${same.slice(0, -1).map(nameOf).join(', ')}. Si los querés, agregalos con otro id.`);
   }
   const crateCommands = list(root['Prize-Commands']).map(toExcellentCommand);
+  const crateMessages = list(root['Prize-Message']).map(String);
+  const crateName = String(root.CrateName ?? root.Name ?? 'Crate convertida');
   const rewards = [];
   const used = new Map();
 
@@ -51,9 +54,12 @@ export function parseCrazyCrate(text) {
     // Chance 10 y MaxRange 100 son los valores por defecto del migrador cuando la clave no está
     const weight = crazyWeight(num(prize.Chance, 10), num(prize.MaxRange, 100));
 
-    if (list(prize.Messages).some((m) => String(m).trim())) {
-      warnings.push(`${label}: los Messages no se convirtieron; en ExcellentCrates los mensajes van como comandos o con Broadcast.`);
-    }
+    // PrizeManager: los Messages del premio o, si no tiene, el Prize-Message de la caja; las líneas
+    // vacías no se mandan. Van como tellraw al jugador, con los placeholders que reemplaza CrazyCrates.
+    const ownMessages = list(prize.Messages).map(String);
+    const messages = (ownMessages.length ? ownMessages : crateMessages)
+      .filter((m) => m !== '')
+      .map((m) => tellraw(m.replaceAll('%reward%', name).replaceAll('%reward_stripped%', plain(name)).replaceAll('%crate%', crateName)));
     if (prize.Items) warnings.push(`${label}: la sección Items no se convirtió, el premio quedó solo con sus comandos.`);
     if (String(prize.DisplayNbt ?? '').trim()) warnings.push(`${label}: DisplayNbt no se convirtió; el preview quedó con el ítem plano.`);
     if (prize.Tiers) warnings.push(`${label}: los Tiers (cajas Cosmic/Casino) no existen en ExcellentCrates.`);
@@ -66,7 +72,8 @@ export function parseCrazyCrate(text) {
       originalChance: num(prize.Chance, 10),
       name,
       description: list(prize.Lore ?? prize.DisplayLore).map((l) => String(l)),
-      commands: commands.length ? commands : crateCommands, // CrazyCrates cae en Prize-Commands si el premio no trae
+      // en el orden de PrizeManager: Prize-Commands de la caja (siempre), los del premio y los mensajes
+      commands: [...crateCommands, ...commands, ...messages],
       display, // el ítem como datos: 6.x lo escribe como SNBT y 5.3.3 como NBT codificado
       previewData: { type: 'VANILLA', tagValue: tagValueOf(display), tagDataVersion: DATA_VERSION },
     });
@@ -83,7 +90,7 @@ export function parseCrazyCrate(text) {
 
   return {
     sourcePlugin: 'CrazyCrates',
-    crateName: String(root.CrateName ?? root.Name ?? 'Crate convertida'),
+    crateName,
     description: list(root.Lore).map((l) => String(l)),
     itemMaterial: material(root.Item ?? 'chest'),
     animation: animation === undefined ? 'csgo' : animation,
@@ -128,6 +135,8 @@ function tagValueOf({ material: id, amount, cmd, itemModel, glint }) {
 
 // %player$ es un typo frecuente de %player%: se corrige también
 const toExcellentCommand = (cmd) => String(cmd).replace(/%player[%$]/g, '%player_name%');
+// mensaje al jugador como comando vanilla: anda en 1.20.4 y 1.21.4 sin depender de otro plugin
+const tellraw = (message) => toExcellentCommand(`minecraft:tellraw %player% ${jsonText(message)}`);
 const material = (value) => String(value).toLowerCase().replace(/^minecraft:/, '').trim();
 const plain = (value) => stripMcCodes(String(value)).trim();
 const list = (value) => (Array.isArray(value) ? value : []);

@@ -451,6 +451,8 @@ const CRAZY = `Crate:
     - <gray>linea
   Prize-Commands:
     - say default %player%
+  Prize-Message:
+    - <gray>Ganaste %reward%
   PhysicalKey:
     Name: Llave
     Item: TRIPWIRE_HOOK
@@ -464,6 +466,9 @@ const CRAZY = `Crate:
       Commands:
         - eco give %player% 1000000
         - mi give MATERIAL X %player$ 4
+      Messages:
+        - '<green>¡%player% ganó %reward% en %crate%!'
+        - ''
     '2':
       DisplayName: <gray>Tapado
       Chance: 5
@@ -478,7 +483,14 @@ const crazy = parseCrazyCrate(CRAZY);
 // id repetido: como en el plugin, gana el último (sin Chance/MaxRange: 10/100 del migrador = peso 10)
 assert.deepEqual(crazy.rewards.map((r) => [r.key, r.weight]), [['1m_dinero', 60], ['premio_2', 10]]);
 assert.ok(crazy.warnings.some((w) => /"2" está 2 veces.*Nunca salían: Tapado/.test(w)), crazy.warnings.join('\n'));
-assert.deepEqual(crazy.rewards.map((r) => r.commands), [['eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4'], ['say default %player_name%']], 'Prize-Commands si el premio no trae; %player$ también');
+// PrizeManager: Prize-Commands siempre, después los del premio y los mensajes (los del premio o, si no
+// tiene, Prize-Message) como tellraw; las líneas vacías no se mandan. %player$ también se corrige.
+const tellrawOf = (msg) => `minecraft:tellraw %player_name% ${jsonText(msg).replaceAll('%player%', '%player_name%')}`;
+assert.deepEqual(crazy.rewards.map((r) => r.commands), [
+  ['say default %player_name%', 'eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4', tellrawOf('<green>¡%player% ganó <green>$1M Dinero en <red>Caja!')],
+  ['say default %player_name%', tellrawOf('<gray>Ganaste ᴘʀᴇᴍɪᴏ')],
+]);
+assert.match(crazy.rewards[0].commands[3], /^minecraft:tellraw %player_name% \{"text":"","extra":\[\{"text":"¡%player_name% ganó ","color":"#55ff55"/);
 assert.ok(crazy.warnings.some((w) => w.includes('%player$')));
 assert.equal(crazy.rewards[0].previewData.tagValue, '{count:2,id:"minecraft:sunflower"}');
 assert.equal(crazy.rewards[1].previewData.tagValue, '{components:{"minecraft:custom_model_data":{floats:[1002.0f]},"minecraft:enchantment_glint_override":1b},count:1,id:"minecraft:red_terracotta"}');
@@ -537,7 +549,7 @@ assert.equal(crate533.Preview_Config, 'default');
 assert.deepEqual(crate533.Key, { Required: true, Ids: ['mi_caja'] }, 'CrazyCrates siempre pide llave (RequiredKeys es otra cosa)');
 assert.deepEqual(Object.keys(crate533.Rewards.List), ['1m_dinero', 'premio_2']);
 assert.equal(crate533.Rewards.List['1m_dinero'].Name, '<#55ff55>$1M Dinero', '<green> de MiniMessage es #55FF55');
-assert.deepEqual(crate533.Rewards.List['1m_dinero'].Commands, ['eco give %player_name% 1000000', 'mi give MATERIAL X %player_name% 4']);
+assert.deepEqual(crate533.Rewards.List['1m_dinero'].Commands, crazy.rewards[0].commands);
 const preview533 = readPreviewNbt(crate533.Rewards.List['1m_dinero'].Preview);
 assert.deepEqual([preview533.id, preview533.Count, preview533.tag.display.Name], ['minecraft:sunflower', 2, jsonText('<green>$1M Dinero')]);
 assert.deepEqual(parse(to533.files[1].text), { Name: '<#ffffff>Llave', Virtual: false, Item: { Material: 'TRIPWIRE_HOOK', Name: '<#ffffff>Llave', Lore: [] } });
